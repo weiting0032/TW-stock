@@ -5,4 +5,4 @@ plotly
 requests
 numpy>=2.3.5
 gspread
-st-gsheets-connection  # 💡 修正錯誤名稱！
+st-gsheets-connection  # 💡 確保是這個名稱
