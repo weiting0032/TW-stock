@@ -1,3 +1,4 @@
+import subprocess
 try:
     print("----- DEBUG: INSTALLED PACKAGES -----")
     result = subprocess.run([sys.executable, "-m", "pip", "list"], capture_output=True, text=True)
@@ -790,5 +791,6 @@ with tab2:
 with tab3:
     st.subheader(f"📋 {stock_name} 原始數據檢視")
     st.dataframe(df_an.sort_index(ascending=False), use_container_width=True)
+
 
 
