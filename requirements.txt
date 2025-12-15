@@ -4,3 +4,6 @@ yfinance
 plotly
 requests
 numpy
+# Google Sheets 持久化所需的依賴
+gspread
+streamlit-gsheets-connection
