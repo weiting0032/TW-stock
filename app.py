@@ -16,7 +16,7 @@ import requests
 import time
 import numpy as np
 # 引入 gsheets 連線 (已修正套件名稱)
-from st_gsheets_connection import GSheetsConnection
+from streamlit_gsheets import GSheetsConnection
 
 # --- 0. 基礎設定 ---
 # 🚨 請將此處替換為您的 Google Sheet 試算表名稱 (例如: Streamlit TW Stock)
@@ -791,6 +791,7 @@ with tab2:
 with tab3:
     st.subheader(f"📋 {stock_name} 原始數據檢視")
     st.dataframe(df_an.sort_index(ascending=False), use_container_width=True)
+
 
 
 
