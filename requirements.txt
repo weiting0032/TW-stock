@@ -1,9 +1,7 @@
-# /mount/src/tw-stock/requirements.txt
 streamlit
-st-gsheets-connection  # <-- 確保是 st-gsheets-connection (減號)
 pandas
 yfinance
 plotly
-requests
-numpy
-lxml
+gspread
+gspread-dataframe
+st-gsheets-connection
