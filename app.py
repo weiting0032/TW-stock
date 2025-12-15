@@ -51,7 +51,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 1. 股票代碼清單爬蟲與管理 (定義函數，供初始化使用) ---
-
 @st.cache_data(ttl=86400) 
 def get_tw_stock_map():
     """
@@ -787,3 +786,4 @@ with tab2:
 with tab3:
     st.subheader(f"📋 {stock_name} 原始數據檢視")
     st.dataframe(df_an.sort_index(ascending=False), use_container_width=True)
+
