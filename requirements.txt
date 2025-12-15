@@ -1,9 +1,8 @@
 streamlit
-pandas
+pandas>=2.3.3
 yfinance
 plotly
 requests
-numpy
-# Google Sheets 持久化所需的依賴
+numpy>=2.3.5
 gspread
-streamlit-gsheets-connection
+st-gsheets-connection  # 💡 修正錯誤名稱！
