@@ -1,7 +1,7 @@
-import subprocess
 import sys
-# 將標準套件安裝路徑加入
+# ⚠️ 這行是關鍵！它強制將 Python 虛擬環境的套件路徑加入搜尋列表
 sys.path.append('/home/adminuser/venv/lib/python3.10/site-packages')
+import subprocess
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -787,6 +787,7 @@ with tab2:
 with tab3:
     st.subheader(f"📋 {stock_name} 原始數據檢視")
     st.dataframe(df_an.sort_index(ascending=False), use_container_width=True)
+
 
 
 
