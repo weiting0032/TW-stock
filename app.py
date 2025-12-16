@@ -7,7 +7,7 @@ from plotly.subplots import make_subplots
 import requests
 import time
 import numpy as np
-import os
+import os # <--- 修正：確保 os 模組在全域範圍被導入
 # 移除所有舊的 gsheets 連線和環境修正代碼
 
 # --- 0. 基礎設定 ---
@@ -152,8 +152,8 @@ def get_tw_stock_map():
     url = "https://stock.wespai.com/lists"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     
-    # 檢查是否在 Streamlit Cloud 環境，如果是則不依賴 os.path.exists
-    is_cloud_env = 'STREAMLIT_CLOUD' in os.environ
+    # 檢查是否在 Streamlit Cloud 環境
+    is_cloud_env = 'STREAMLIT_CLOUD' in os.environ # <--- 修正：os 在這裡已經被全域引入
     
     try:
         response = requests.get(url, headers=headers, timeout=10)
@@ -177,8 +177,6 @@ def get_tw_stock_map():
                 data['PB'] = pd.to_numeric(data['PB'], errors='coerce').round(2)
                 
                 # 在 Streamlit Cloud 上不保證可以寫入本地檔案系統
-                # 為了避免 NameError，需要重新 import os
-                import os
                 if not is_cloud_env: 
                     # 只有在本地環境才嘗試保存快取
                     data.to_csv(STOCK_MAP_FILE, index=False)
@@ -189,7 +187,6 @@ def get_tw_stock_map():
         st.sidebar.warning(f"網路抓取失敗，嘗試讀取離線檔案。")
 
     # 讀取本地備份 (僅在本地環境運行時有效)
-    import os
     if not is_cloud_env and os.path.exists(STOCK_MAP_FILE):
         df = pd.read_csv(STOCK_MAP_FILE, dtype={'代碼': str})
         df['代碼'] = df['代碼'].str.zfill(4)
@@ -203,8 +200,6 @@ def get_tw_stock_map():
         "0050": {"名稱": "元大台灣50", "產業類別": "ETF", "PE": np.nan, "PB": np.nan},
     }
 
-# 確保 os 在全域範圍可用
-import os
 # 重新執行抓取代碼
 TW_STOCKS = get_tw_stock_map()
 STOCK_SEARCH_LIST = [f"{code} {info['名稱']}" for code, info in TW_STOCKS.items()]
@@ -266,9 +261,6 @@ def get_stock_data(symbol_input, period="1y"):
 
     full_symbol = symbol if '.' in symbol else f"{symbol}.TW"
     stock = yf.Ticker(full_symbol)
-    
-    # 確保 time 庫可用
-    import time
     
     df = stock.history(period=period)
     if df.empty and '.' not in symbol:
@@ -732,11 +724,6 @@ with col2:
     st.session_state.selected_symbol_main = sel_sym
 
 # 抓取並分析資料
-# 確保 time 庫可用
-import time
-# 確保 numpy 庫可用
-import numpy as np
-
 raw_df, yf_sym, stock_name = get_stock_data(sel_sym, period="2y")
 if raw_df.empty or len(raw_df) < 2: st.error("資料讀取失敗"); st.stop()
 df_an = calculate_indicators(raw_df)
@@ -863,4 +850,3 @@ with tab2:
 with tab3:
     st.subheader(f"📋 {stock_name} 原始數據檢視")
     st.dataframe(df_an.sort_index(ascending=False), use_container_width=True)
-
