@@ -7,6 +7,7 @@ from plotly.subplots import make_subplots
 import requests
 import time
 import numpy as np
+import os
 # 移除所有舊的 gsheets 連線和環境修正代碼
 
 # --- 0. 基礎設定 ---
@@ -862,3 +863,4 @@ with tab2:
 with tab3:
     st.subheader(f"📋 {stock_name} 原始數據檢視")
     st.dataframe(df_an.sort_index(ascending=False), use_container_width=True)
+
