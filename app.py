@@ -1,22 +1,17 @@
-import sys
-# ⚠️ 這行是關鍵！它強制將 Python 虛擬環境的套件路徑加入搜尋列表
-sys.path.append('/home/adminuser/venv/lib/python3.10/site-packages')
-import subprocess
 import streamlit as st
+import gspread
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import os
 import requests
 import time
 import numpy as np
-# 引入 gsheets 連線 (已修正套件名稱)
-from st_gsheets_connection import GSheetsConnection
+# 移除所有舊的 gsheets 連線和環境修正代碼
 
 # --- 0. 基礎設定 ---
 # 🚨 請將此處替換為您的 Google Sheet 試算表名稱 (例如: Streamlit TW Stock)
-PORTFOLIO_SHEET_TITLE = 'Streamlit TW Stock'
+PORTFOLIO_SHEET_TITLE = 'Streamlit TW Stock' # <--- 請務必在這裡替換成您的試算表名稱！
 STOCK_MAP_FILE = 'tw_stock_map.csv' # 仍保留本地快取
 
 # 版本說明修改
@@ -54,7 +49,99 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. 股票代碼清單爬蟲與管理 ---
+# --- Google Sheets 連線核心函數 (使用 gspread) ---
+
+def get_gsheets_client():
+    """初始化並返回 gspread 客戶端和試算表對象"""
+    try:
+        # 1. 驗證連線：使用 st.secrets 自動讀取 .streamlit/secrets.toml
+        credentials = st.secrets["gcp_service_account"]
+        gc = gspread.service_account_from_dict(credentials)
+        
+        # 2. 開啟您的試算表 (使用全域變數 PORTFOLIO_SHEET_TITLE)
+        sh = gc.open(PORTFOLIO_SHEET_TITLE)
+        return gc, sh
+    except KeyError:
+        st.error("⚠️ 錯誤：找不到 st.secrets['gcp_service_account'] 憑證。請檢查 secrets.toml 檔案。")
+    except gspread.exceptions.SpreadsheetNotFound:
+        st.error(f"⚠️ 錯誤：找不到名為 '{PORTFOLIO_SHEET_TITLE}' 的試算表。請確認名稱是否正確。")
+    except Exception as e:
+        if "forbidden" in str(e).lower():
+             st.error(f"⚠️ 錯誤：權限不足。請確認已將 Service Account Email 分享給此試算表。")
+        else:
+            st.error(f"⚠️ 連線 Google Sheets 失敗。錯誤: {e}")
+            st.exception(e)
+    return None, None
+
+@st.cache_data(ttl=600) # 緩存 600 秒
+def load_portfolio():
+    """從 Google Sheet 載入投資組合數據 (使用 gspread)"""
+    gc, sh = get_gsheets_client()
+    if sh is None:
+        return pd.DataFrame(columns=['Symbol', 'Name', 'Cost', 'Shares', 'Note'])
+
+    try:
+        # 讀取整個工作表 (Sheet 1)
+        worksheet = sh.sheet1
+        # 讀取所有記錄並轉換為 DataFrame
+        df = pd.DataFrame(worksheet.get_all_records())
+        
+        # 清理和確保欄位存在 (假設 Sheets 的第一行是 ['Symbol', 'Name', 'Cost', 'Shares', 'Note'])
+        if df.empty or len(df.columns) < 5:
+            # 如果讀取是空的或欄位不對，創建一個空的標準結構
+            return pd.DataFrame(columns=['Symbol', 'Name', 'Cost', 'Shares', 'Note'])
+
+        # 確保欄位名稱正確
+        df.columns = ['Symbol', 'Name', 'Cost', 'Shares', 'Note']
+        df['Symbol'] = df['Symbol'].astype(str).str.zfill(4)
+        
+        # 確保數字欄位格式正確
+        df['Cost'] = pd.to_numeric(df['Cost'], errors='coerce').fillna(0.0)
+        df['Shares'] = pd.to_numeric(df['Shares'], errors='coerce').fillna(0).astype(int)
+        df['Note'] = df['Note'].astype(str).fillna('')
+        
+        # 僅保留 Symbol 不為空且 Shares >= 0 的行
+        df = df[(df['Symbol'] != '') & (df['Symbol'].str.len() >= 4)].copy().reset_index(drop=True) 
+        
+        return df
+    
+    except Exception as e:
+        st.error(f"⚠️ Google Sheet 讀取工作表內容失敗。錯誤: {e}")
+        return pd.DataFrame(columns=['Symbol', 'Name', 'Cost', 'Shares', 'Note'])
+
+def save_portfolio(df):
+    """將投資組合數據寫入 Google Sheet (使用 gspread)"""
+    # 確保 Name 和 Note 欄位是最新的
+    df['Name'] = df['Symbol'].apply(get_stock_name)
+    df['Note'] = df['Note'].fillna('')
+    
+    # 過濾掉 Shares < 0 的錯誤數據
+    df_to_save = df[df['Shares'] >= 0].copy()
+    
+    gc, sh = get_gsheets_client()
+    if sh is None:
+        return False
+        
+    try:
+        # 寫入 Google Sheet (使用 '工作表1')
+        worksheet = sh.sheet1
+        
+        # 為了覆蓋，先清空工作表內容（保留標題行）
+        worksheet.clear()
+        
+        # 轉換 DataFrame 為列表，包含標題行
+        data_list = [df_to_save.columns.values.tolist()] + df_to_save.values.tolist()
+        
+        # 將資料寫入
+        worksheet.update(data_list)
+        st.toast("✅ 投資組合已成功儲存至 Google Sheets！", icon='💾')
+        return True
+    
+    except Exception as e:
+        st.error(f"⚠️ Google Sheet 儲存失敗。請檢查您的 Sheets 權限是否足夠。錯誤: {e}")
+        return False
+
+# --- 1. 股票代碼清單爬蟲與管理 (保持不變) ---
 @st.cache_data(ttl=86400)
 def get_tw_stock_map():
     """
@@ -63,6 +150,9 @@ def get_tw_stock_map():
     """
     url = "https://stock.wespai.com/lists"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    
+    # 檢查是否在 Streamlit Cloud 環境，如果是則不依賴 os.path.exists
+    is_cloud_env = 'STREAMLIT_CLOUD' in os.environ
     
     try:
         response = requests.get(url, headers=headers, timeout=10)
@@ -85,15 +175,21 @@ def get_tw_stock_map():
                 data['PE'] = pd.to_numeric(data['PE'], errors='coerce').round(2)
                 data['PB'] = pd.to_numeric(data['PB'], errors='coerce').round(2)
                 
-                # 保存快取並返回字典
-                data.to_csv(STOCK_MAP_FILE, index=False)
+                # 在 Streamlit Cloud 上不保證可以寫入本地檔案系統
+                # 為了避免 NameError，需要重新 import os
+                import os
+                if not is_cloud_env: 
+                    # 只有在本地環境才嘗試保存快取
+                    data.to_csv(STOCK_MAP_FILE, index=False)
+                
                 return data.set_index('代碼').apply(lambda x: x.to_dict(), axis=1).to_dict()
 
     except Exception as e:
         st.sidebar.warning(f"網路抓取失敗，嘗試讀取離線檔案。")
 
-    # 讀取本地備份
-    if os.path.exists(STOCK_MAP_FILE):
+    # 讀取本地備份 (僅在本地環境運行時有效)
+    import os
+    if not is_cloud_env and os.path.exists(STOCK_MAP_FILE):
         df = pd.read_csv(STOCK_MAP_FILE, dtype={'代碼': str})
         df['代碼'] = df['代碼'].str.zfill(4)
         df['PE'] = pd.to_numeric(df['PE'], errors='coerce').round(2)
@@ -106,6 +202,9 @@ def get_tw_stock_map():
         "0050": {"名稱": "元大台灣50", "產業類別": "ETF", "PE": np.nan, "PB": np.nan},
     }
 
+# 確保 os 在全域範圍可用
+import os
+# 重新執行抓取代碼
 TW_STOCKS = get_tw_stock_map()
 STOCK_SEARCH_LIST = [f"{code} {info['名稱']}" for code, info in TW_STOCKS.items()]
 
@@ -126,64 +225,18 @@ def get_stock_fundamentals(symbol):
     
     return industry, pe_str, pb_str
 
-# --- 2. 資料存取函數 (改用 Google Sheets 連線) ---
-
-def load_portfolio():
-    """從 Google Sheet 載入投資組合數據"""
-    try:
-        # 使用 Streamlit Gsheets Connection 連線到您的 Google Sheet
-        conn = st.connection("gsheets", type=GSheetsConnection)
-
-        # 讀取整個工作表 (Sheet 1)
-        # usecols=list(range(5)) 確保只讀取 Symbol, Name, Cost, Shares, Note 這五個欄位
-        df = conn.read(spreadsheet=PORTFOLIO_SHEET_TITLE, worksheet="工作表1", usecols=list(range(5)))
-        
-        # 清理和確保欄位存在
-        df.columns = ['Symbol', 'Name', 'Cost', 'Shares', 'Note']
-        df['Symbol'] = df['Symbol'].astype(str).str.zfill(4)
-        
-        # 確保數字欄位格式正確
-        df['Cost'] = pd.to_numeric(df['Cost'], errors='coerce').fillna(0.0)
-        df['Shares'] = pd.to_numeric(df['Shares'], errors='coerce').fillna(0).astype(int)
-        df['Note'] = df['Note'].astype(str).fillna('')
-        
-        # 僅保留 Symbol 不為空且 Shares >= 0 的行
-        df = df[(df['Symbol'] != '') & (df['Symbol'].str.len() >= 4)].copy().reset_index(drop=True) 
-
-        return df
-    
-    except Exception as e:
-        # 在 Streamlit Cloud 上，如果連線失敗，請檢查 st.secrets 和 Google Sheet 權限
-        st.error(f"⚠️ Google Sheet 載入失敗，請檢查權限、連線設定或試算表名稱/工作表名稱。錯誤: {e}")
-        # 失敗時返回一個空的 DataFrame
-        return pd.DataFrame(columns=['Symbol', 'Name', 'Cost', 'Shares', 'Note'])
-
-def save_portfolio(df):
-    """將投資組合數據寫入 Google Sheet"""
-    # 確保 Name 和 Note 欄位是最新的
-    df['Name'] = df['Symbol'].apply(get_stock_name)
-    df['Note'] = df['Note'].fillna('')
-    
-    # 過濾掉 Shares < 0 的錯誤數據
-    df_to_save = df[df['Shares'] >= 0].copy()
-    
-    try:
-        # 寫入 Google Sheet (使用 '工作表1'，如果您的工作表名稱不同，請修改)
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        # reset_index=False 避免將索引寫入 Sheet
-        conn.write(df_to_save, spreadsheet=PORTFOLIO_SHEET_TITLE, worksheet="工作表1")
-        
-    except Exception as e:
-        st.error(f"⚠️ Google Sheet 儲存失敗。請檢查 Secrets 檔案是否正確。錯誤: {e}")
+# --- 2. 資料存取函數 (已使用新的 gspread 函數替換舊的 load_portfolio/save_portfolio) ---
+# 舊的 load_portfolio/save_portfolio 函數已被上面的新函數覆蓋和替換。
 
 
-# --- 3. Session State 初始化 ---
+# --- 3. Session State 初始化 (保持不變) ---
 if 'input_cost' not in st.session_state: st.session_state.input_cost = 0.0
 if 'input_shares' not in st.session_state: st.session_state.input_shares = 0
 if 'input_note' not in st.session_state: st.session_state.input_note = ''
 if 'search_symbol_key' not in st.session_state: st.session_state.search_symbol_key = ""
 
 if 'portfolio_df' not in st.session_state:
+    # 首次載入時呼叫新的 load_portfolio
     st.session_state.portfolio_df = load_portfolio()
     
 if 'quick_search_result' not in st.session_state:
@@ -213,12 +266,15 @@ def get_stock_data(symbol_input, period="1y"):
     full_symbol = symbol if '.' in symbol else f"{symbol}.TW"
     stock = yf.Ticker(full_symbol)
     
+    # 確保 time 庫可用
+    import time
+    
     df = stock.history(period=period)
     if df.empty and '.' not in symbol:
         full_symbol = f"{symbol}.TWO"
         stock = yf.Ticker(full_symbol)
         df = stock.history(period=period)
-            
+        
     return df, full_symbol, stock_name
 
 def calculate_indicators(df):
@@ -292,7 +348,7 @@ def get_strategy_suggestion(df):
         comment = "股價沿月線上漲，動能強勁，宜順勢操作。"
         html_msg = f"""<div style='background:#e3f2fd; padding:10px; border-left:5px solid {color_code}'>
         <b style='color:{color_code}'>📈 多頭排列</b><br>{comment}</div>"""
-    
+        
     else:
         comment = f"RSI: {rsi:.1f}，無明確方向，等待趨勢確立。"
         html_msg = f"""<div style='background:#f5f5f5; padding:10px; border-left:5px solid {color_code}'>
@@ -425,8 +481,10 @@ with st.sidebar.expander("➕ 新增/更新 監控標的", expanded=False):
                 df = pd.concat([df, new_row], ignore_index=True)
             
             st.session_state.portfolio_df = df
+            # 呼叫新的 save_portfolio
             save_portfolio(df)
             st.success(f"已更新 {in_name} (股數: {new_shares})")
+            st.cache_data.clear() # 清除快取，確保下次 load_portfolio 讀取新數據
             st.rerun()
 
     if c2.button("🗑️ 刪除", key="delete_button"):
@@ -434,12 +492,14 @@ with st.sidebar.expander("➕ 新增/更新 監控標的", expanded=False):
                 in_symbol = search_symbol.split(' ')[0]
                 df = st.session_state.portfolio_df
                 st.session_state.portfolio_df = df[df['Symbol'] != in_symbol]
+                # 呼叫新的 save_portfolio
                 save_portfolio(st.session_state.portfolio_df)
                 st.warning("已刪除該監控標的")
                 st.session_state.search_symbol_key = "" 
                 st.session_state.input_cost = 0.0
                 st.session_state.input_shares = 0
                 st.session_state.input_note = ''
+                st.cache_data.clear() # 清除快取，確保下次 load_portfolio 讀取新數據
                 st.rerun()
 
 # B. 低基期標的快篩
@@ -506,7 +566,7 @@ if st.session_state.detail_symbol:
         # 確保回到快篩結果列表 (低基期篩選狀態保持 True)
         st.session_state.low_base_filter = True 
         st.rerun()
-            
+             
     st.markdown("---")
 
     # 載入數據與分析
@@ -644,7 +704,7 @@ if st.session_state.quick_search_result:
 portfolio = st.session_state.portfolio_df
 if portfolio.empty:
     st.title("🚀 台股戰情分析室 V3.4 (Google Sheet 持久化)")
-    st.info("請在側邊欄 **「新增/更新 監控標的」** 中加入您的股票，或使用 **「低基期標的快篩」** 尋找潛力標的。")
+    st.info("⚠️ 警告：Google Sheet 載入失敗或庫存為空。\n\n請在側邊欄 **「新增/更新 監控標的」** 中加入您的股票，或使用 **「低基期標的快篩」** 尋找潛力標的。")
     st.stop()
 
 # 庫存選擇邏輯
@@ -671,6 +731,11 @@ with col2:
     st.session_state.selected_symbol_main = sel_sym
 
 # 抓取並分析資料
+# 確保 time 庫可用
+import time
+# 確保 numpy 庫可用
+import numpy as np
+
 raw_df, yf_sym, stock_name = get_stock_data(sel_sym, period="2y")
 if raw_df.empty or len(raw_df) < 2: st.error("資料讀取失敗"); st.stop()
 df_an = calculate_indicators(raw_df)
@@ -687,7 +752,8 @@ my_cost = curr_rec['Cost']
 mkt_val = last['Close'] * my_shares
 cost_val = my_cost * my_shares
 profit = mkt_val - cost_val
-profit_pct = (profit / cost_val * 100) if cost_val > 0 else 0
+# 避免除以零
+profit_pct = (profit / cost_val * 100) if cost_val > 0 and my_shares > 0 else 0
 diff_pct = (last['Close'] - prev['Close']) / prev['Close'] * 100
 
 # --- 8. 渲染 Tab 內容 ---
@@ -745,7 +811,7 @@ with tab2:
                 total_cost += cv
                 pl = mv - cv
                 pl_pct = (pl / cv * 100) if cv > 0 else 0
-            
+                
             note_display = r['Note'] if r['Note'] else ''
             
             rows.append({
@@ -779,7 +845,16 @@ with tab2:
     
     if rows:
         df_show = pd.DataFrame(rows)
-        st.write(df_show.to_html(escape=False, index=False), unsafe_allow_html=True)
+        # 增加損益、市值和股數的格式化
+        df_show['損益'] = df_show['損益'].apply(lambda x: f'${x:,}')
+        df_show['市值'] = df_show['市值'].apply(lambda x: f'${x:,}')
+        df_show['股數'] = df_show['股數'].apply(lambda x: f'{x:,}')
+        
+        # 使用 markdown 模擬表格並允許 HTML 渲染建議顏色
+        st.markdown(
+            df_show.to_html(escape=False, index=False), 
+            unsafe_allow_html=True
+        )
     else:
         st.info("目前投資組合為空，或 Google Sheet 載入失敗。")
 
@@ -787,12 +862,3 @@ with tab2:
 with tab3:
     st.subheader(f"📋 {stock_name} 原始數據檢視")
     st.dataframe(df_an.sort_index(ascending=False), use_container_width=True)
-
-
-
-
-
-
-
-
-
