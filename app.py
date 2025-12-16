@@ -1,11 +1,7 @@
 import subprocess
-try:
-    print("----- DEBUG: INSTALLED PACKAGES -----")
-    result = subprocess.run([sys.executable, "-m", "pip", "list"], capture_output=True, text=True)
-    print(result.stdout)
-    print("----- DEBUG: END -----")
-except Exception as e:
-    print(f"Debug Error: {e}")
+import sys
+# 將標準套件安裝路徑加入
+sys.path.append('/home/adminuser/venv/lib/python3.10/site-packages')
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -791,6 +787,7 @@ with tab2:
 with tab3:
     st.subheader(f"📋 {stock_name} 原始數據檢視")
     st.dataframe(df_an.sort_index(ascending=False), use_container_width=True)
+
 
 
 
