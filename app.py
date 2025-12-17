@@ -188,19 +188,28 @@ if st.session_state.menu == "portfolio":
 elif st.session_state.menu == "screening":
     st.subheader("💰 低基期價值快篩")
     c1, c2, c3 = st.columns([2, 2, 1])
-    pe_lim = c1.number_input("PE 本益比上限", value=15.0)
-    pb_lim = c2.number_input("PB 淨值比上限", value=1.2)
-    
-    if c3.button("啟動掃描"):
-        # 維持原過濾邏輯
-        st.session_state.scan_results = STOCK_DF[
-            (STOCK_DF['PE'] > 0) & (STOCK_DF['PE'] <= pe_lim) & 
-            (STOCK_DF['PB'] > 0) & (STOCK_DF['PB'] <= pb_lim)
-        ].copy().sort_values(by=['產業', 'PE'])
+    pe_lim = c1.number_input("PE 上限", value=15.0)
+    pb_lim = c2.number_input("PB 上限", value=1.2)
+    if c3.button("開始全面掃描"):
+        st.session_state.scan_results = [k for k, v in STOCK_MAP.items() if 0 < float(v['PE']) <= pe_lim and 0 < float(v['PB']) <= pb_lim]
     
     if 'scan_results' in st.session_state:
-        st.write(f"📊 篩選結果：共找到 {len(st.session_state.scan_results)} 檔標的")
-        st.dataframe(st.session_state.scan_results, use_container_width=True, hide_index=True)
+        st.info(f"符合條件標的共 {len(st.session_state.scan_results)} 筆")
+        sc_cols = st.columns(3)
+        for i, code in enumerate(st.session_state.scan_results):
+            with sc_cols[i % 3]:
+                name = STOCK_MAP[code]['名稱']
+                group = STOCK_MAP[code]['產業']
+                st.markdown(f"""
+                <div class="stock-card">
+                    <b>{code} {name}</b> <br><small>{group}</small><br>
+                    <hr style="margin:8px 0;">
+                    PE: {STOCK_MAP[code]['PE']} | PB: {STOCK_MAP[code]['PB']}
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button(f"執行診斷 {code}", key=f"sc_{code}"):
+                    d = fetch_data_v6(code)
+                    if d is not None: st.session_state.current_plot = (d, name)
 
 # --- C. 免庫存診斷 ---
 elif st.session_state.menu == "diagnosis":
@@ -245,3 +254,4 @@ if 'current_plot' in st.session_state:
     st.divider()
     p_df, p_name = st.session_state.current_plot
     st.plotly_chart(plot_v6_chart(p_df, p_name), use_container_width=True)
+
