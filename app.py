@@ -10,7 +10,7 @@ import random
 
 # --- 0. 基礎設定 ---
 PORTFOLIO_SHEET_TITLE = 'Streamlit TW Stock' 
-st.set_page_config(page_title="台股戰情指揮中心 V13.0", layout="wide", page_icon="📈")
+st.set_page_config(page_title="台股戰情指揮中心 V13.1", layout="wide", page_icon="📈")
 
 st.markdown("""
     <style>
@@ -40,7 +40,6 @@ def load_portfolio():
         gc = get_gsheet_client()
         sh = gc.open(PORTFOLIO_SHEET_TITLE)
         df = pd.DataFrame(sh.sheet1.get_all_records())
-        # 強制轉換格式以確保一致性
         df['Symbol'] = df['Symbol'].astype(str).str.zfill(4)
         df['Cost'] = pd.to_numeric(df['Cost'], errors='coerce').fillna(0.0)
         df['Shares'] = pd.to_numeric(df['Shares'], errors='coerce').fillna(0)
@@ -88,15 +87,15 @@ def get_strategy_suggestion(df):
     is_bullish_trend = curr_price > sma20 and sma20 > sma60
     
     if is_panic:
-        return ("極度恐慌", "#d32f2f", f"<div style='background:#ffebee; padding:10px; border-left:5px solid #d32f2f; border-radius:5px;'><b style='color:#d32f2f'>⚠️ 極度恐慌 (RSI < 25)</b><br>RSI: {rsi:.1f}，市場情緒悲觀，留意超跌反彈機會。</div>", f"RSI: {rsi:.1f}")
+        return ("極度恐慌", "#d32f2f", f"<div style='background:#ffebee; padding:10px; border-left:5px solid #d32f2f; border-radius:5px;'><b style='color:#d32f2f'>⚠️ 極度恐慌 (RSI < 25)</b><br>RSI: {rsi:.1f}，市場情緒悲觀。</div>", f"RSI: {rsi:.1f}")
     elif is_oversold and is_buy_zone and macd_turn_up:
-        return ("黃金買訊", "#2e7d32", f"<div style='background:#e8f5e9; padding:10px; border-left:5px solid #2e7d32; border-radius:5px;'><b style='color:#2e7d32'>🔥 強力買進訊號</b><br>RSI低檔 + 布林下軌 + MACD轉折，多重訊號支撐。</div>", "技術面買訊")
+        return ("黃金買訊", "#2e7d32", f"<div style='background:#e8f5e9; padding:10px; border-left:5px solid #2e7d32; border-radius:5px;'><b style='color:#2e7d32'>🔥 強力買進訊號</b><br>RSI低檔 + 布林下軌 + MACD轉折。</div>", "技術面買訊")
     elif rsi > 75:
-        return ("高檔過熱", "#ef6c00", f"<div style='background:#fff3e0; padding:10px; border-left:5px solid #ef6c00; border-radius:5px;'><b style='color:#ef6c00'>⛔ 高檔過熱 (RSI > 75)</b><br>RSI: {rsi:.1f}，短線過熱，建議減碼或觀望。</div>", f"RSI: {rsi:.1f}")
+        return ("高檔過熱", "#ef6c00", f"<div style='background:#fff3e0; padding:10px; border-left:5px solid #ef6c00; border-radius:5px;'><b style='color:#ef6c00'>⛔ 高檔過熱 (RSI > 75)</b><br>RSI: {rsi:.1f}，建議減碼。</div>", f"RSI: {rsi:.1f}")
     elif is_bullish_trend and macd_hist > 0:
-        return ("多頭續抱", "#1976d2", f"<div style='background:#e3f2fd; padding:10px; border-left:5px solid #1976d2; border-radius:5px;'><b style='color:#1976d2'>📈 多頭排列</b><br>股價沿月線上漲，動能強勁，宜順勢操作。</div>", "動能強勁")
+        return ("多頭續抱", "#1976d2", f"<div style='background:#e3f2fd; padding:10px; border-left:5px solid #1976d2; border-radius:5px;'><b style='color:#1976d2'>📈 多頭排列</b><br>股價動能強勁。</div>", "動能強勁")
     else:
-        return ("觀望整理", "#757575", f"<div style='background:#f5f5f5; padding:10px; border-left:5px solid #757575; border-radius:5px;'><b style='color:#616161'>☕ 盤整中</b><br>RSI: {rsi:.1f}，無明確方向，等待趨勢確立。</div>", f"RSI: {rsi:.1f}")
+        return ("觀望整理", "#757575", f"<div style='background:#f5f5f5; padding:10px; border-left:5px solid #757575; border-radius:5px;'><b style='color:#616161'>☕ 盤整中</b><br>等待趨勢確立。</div>", f"RSI: {rsi:.1f}")
 
 @st.cache_data(ttl=600)
 def fetch_yf_history(symbol):
@@ -132,11 +131,15 @@ with st.sidebar:
     if st.button("🔍 免庫存診斷"): st.session_state.menu = "diagnosis"
     if st.button("📝 庫存清單管理"): st.session_state.menu = "management"
 
-portfolio = load_portfolio()
+# 載入庫存
+if 'df_portfolio' not in st.session_state:
+    st.session_state.df_portfolio = load_portfolio()
 
-# --- 功能 A: 庫存個股監控 ---
+# --- 各項功能邏輯 ---
+
 if st.session_state.menu == "portfolio":
     st.markdown('<div class="function-title">功能：🚀 庫存動態監控</div>', unsafe_allow_html=True)
+    portfolio = st.session_state.df_portfolio
     if not portfolio.empty:
         total_mv, total_cost = 0.0, 0.0
         details = []
@@ -186,7 +189,6 @@ if st.session_state.menu == "portfolio":
                 if st.button(f"查看技術分析 {r['Symbol']}", key=f"btn_{r['Symbol']}"):
                     if h_df is not None: st.session_state.current_plot = (h_df, r['Name'])
 
-# --- 功能 B: 低基期快篩 ---
 elif st.session_state.menu == "screening":
     st.markdown('<div class="function-title">功能：💰 低基期潛力標的快篩</div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([2, 2, 1])
@@ -226,7 +228,6 @@ elif st.session_state.menu == "screening":
                     if st.button(f"技術診斷 {row['代碼']}", key=f"sc_{row['代碼']}"):
                         if h_df is not None: st.session_state.current_plot = (h_df, row['名稱'])
 
-# --- 功能 C: 免庫存診斷 ---
 elif st.session_state.menu == "diagnosis":
     st.markdown('<div class="function-title">功能：🔍 全市場技術分析診斷</div>', unsafe_allow_html=True)
     selection = st.selectbox("搜尋標的", options=["請選擇..."] + STOCK_OPTIONS)
@@ -235,47 +236,49 @@ elif st.session_state.menu == "diagnosis":
         df = fetch_yf_history(code)
         if df is not None: st.session_state.current_plot = (df, name)
 
-# --- 功能 D: 庫存管理 (新增/刪除邏輯) ---
 elif st.session_state.menu == "management":
     st.markdown('<div class="function-title">功能：📝 庫存清單管理系統</div>', unsafe_allow_html=True)
     
     # 1. 新增標的區塊
-    with st.expander("➕ 新增標的至庫存", expanded=False):
+    with st.expander("➕ 新增標的至庫存", expanded=True):
         c1, c2, c3 = st.columns(3)
         new_sel = c1.selectbox("搜尋標的", options=["請選擇..."] + STOCK_OPTIONS)
-        new_cost = c2.number_input("買入單價", min_value=0.0, step=0.1)
-        new_shares = c3.number_input("買入股數", min_value=1, step=100)
+        new_cost = c2.number_input("買入單價", min_value=0.0, step=0.1, key="add_cost")
+        new_shares = c3.number_input("買入股數", min_value=1, step=100, key="add_shares")
         
         if st.button("確認新增"):
             if new_sel != "請選擇...":
                 n_code, n_name = new_sel.split(" ")[0], new_sel.split(" ")[1]
-                new_row = pd.DataFrame([{'Symbol': n_code, 'Name': n_name, 'Cost': new_cost, 'Shares': new_shares, 'Note': ''}])
-                portfolio = pd.concat([portfolio, new_row], ignore_index=True)
-                st.success(f"已暫存 {n_name}，請點擊下方儲存按鈕正式生效。")
+                new_data = {'Symbol': n_code, 'Name': n_name, 'Cost': new_cost, 'Shares': new_shares, 'Note': ''}
+                # 更新 session_state 中的 df
+                st.session_state.df_portfolio = pd.concat([st.session_state.df_portfolio, pd.DataFrame([new_data])], ignore_index=True)
+                st.success(f"✅ 已新增 {n_name}。注意：請務必點擊下方「儲存所有變更」才會寫入 Excel！")
             else:
                 st.warning("請先選擇標的。")
 
-    # 2. 編輯與刪除區塊
+    # 2. 顯示與編輯
     st.write("### 庫存列表編輯")
-    st.caption("提示：將「股數」修改為 0 並儲存，即可刪除該筆資料。")
-    edited_df = st.data_editor(portfolio, hide_index=True, use_container_width=True)
+    # 使用 session_state 作為數據源
+    edited_df = st.data_editor(st.session_state.df_portfolio, hide_index=True, use_container_width=True, key="portfolio_editor")
     
     if st.button("💾 儲存所有變更"):
-        # 執行「股數為 0 則刪除」的邏輯
+        # 股數為 0 自動刪除邏輯
         final_df = edited_df[edited_df['Shares'] > 0].copy()
-        
-        try:
-            gc = get_gsheet_client()
-            sh = gc.open(PORTFOLIO_SHEET_TITLE).sheet1
-            sh.clear()
-            # 寫入標頭與過濾後的資料
-            sh.update('A1', [final_df.columns.tolist()] + final_df.values.tolist())
-            st.success("變更已成功同步至資料庫！")
-            st.cache_data.clear()
-            time.sleep(1)
-            st.rerun()
-        except Exception as e:
-            st.error(f"儲存失敗: {e}")
+        with st.spinner('正在同步至 Google Sheets...'):
+            try:
+                gc = get_gsheet_client()
+                sh = gc.open(PORTFOLIO_SHEET_TITLE).sheet1
+                sh.clear()
+                # 寫入包含標頭的完整資料
+                sh.update('A1', [final_df.columns.tolist()] + final_df.values.tolist())
+                # 重新載入並清除緩存
+                st.session_state.df_portfolio = final_df
+                st.cache_data.clear()
+                st.success("🎉 資料已成功寫入 Excel！")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ 寫入失敗，請檢查權限或網路: {e}")
 
 # --- 底部圖表 ---
 if 'current_plot' in st.session_state:
