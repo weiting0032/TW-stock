@@ -1,184 +1,205 @@
-# =================================================
-# 台股 V6 指揮中心（官方資料 × 跨年度完整版）
-# =================================================
-
 import streamlit as st
+import gspread
+import yfinance as yf
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
-from datetime import datetime
+import time
+import random
+import numpy as np
 
-st.set_page_config(page_title="台股 V6 指揮中心", layout="wide")
+# --- 0. 基礎設定 ---
+PORTFOLIO_SHEET_TITLE = 'Streamlit TW Stock' 
+st.set_page_config(page_title="台股戰情指揮中心 V6.1", layout="wide", page_icon="📈")
 
-# =================================================
-# 台股官方資料（跨年度）
-# =================================================
+# 自訂 CSS 保持原樣式
+st.markdown("""
+    <style>
+    .stock-card { border: 1px solid #ddd; padding: 15px; border-radius: 12px; background-color: white; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); margin-bottom: 10px;}
+    .metric-bar { background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%); color: white; padding: 20px; border-radius: 15px; margin-bottom: 25px; }
+    .stButton>button { width: 100%; border-radius: 8px; }
+    </style>
+""", unsafe_allow_html=True)
 
-def roc_to_ad(s):
-    y,m,d = s.split("/")
-    return f"{int(y)+1911}-{m}-{d}"
-
-@st.cache_data(ttl=3600)
-def fetch_tw_year(symbol, year):
-    is_twse = int(symbol) < 8000
-
+# --- 1. 核心數據函數 ---
+@st.cache_data(ttl=600)
+def load_portfolio():
     try:
-        if is_twse:
-            url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={year}0101&stockNo={symbol}"
-            r = requests.get(url, timeout=10).json()
-            rows = r.get("data", [])
-            if not rows:
-                return pd.DataFrame()
-
-            df = pd.DataFrame(rows, columns=[
-                "Date","Vol","Amt","Open","High","Low","Close","Chg","Cnt"
-            ])
-            df["Date"] = pd.to_datetime(df["Date"].apply(roc_to_ad))
-
-        else:
-            url = f"https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?l=zh-tw&d={year}/01"
-            r = requests.get(url, timeout=10).json()
-            rows = [x for x in r["aaData"] if x[0] == symbol]
-            if not rows:
-                return pd.DataFrame()
-
-            df = pd.DataFrame(rows, columns=[
-                "Symbol","Name","Close","Chg","Open","High","Low","Vol","Amt","Cnt"
-            ])
-            df["Date"] = pd.to_datetime(r["reportDate"])
-
-        for c in ["Open","High","Low","Close"]:
-            df[c] = df[c].astype(str).str.replace(",","").astype(float)
-
+        credentials = st.secrets["gcp_service_account"]
+        gc = gspread.service_account_from_dict(credentials)
+        sh = gc.open(PORTFOLIO_SHEET_TITLE)
+        df = pd.DataFrame(sh.sheet1.get_all_records())
+        df['Symbol'] = df['Symbol'].astype(str).str.zfill(4)
         return df
+    except: return pd.DataFrame(columns=['Symbol', 'Name', 'Cost', 'Shares', 'Note'])
 
-    except:
-        return pd.DataFrame()
+@st.cache_data(ttl=86400)
+def get_tw_map():
+    url = "https://stock.wespai.com/lists"
+    try:
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+        df = pd.read_html(res.text)[0]
+        data = df.iloc[:, [0, 1, 2, 14, 15]].copy()
+        data.columns = ['代碼', '名稱', '產業', 'PE', 'PB']
+        data['代碼'] = data['代碼'].astype(str).str.zfill(4)
+        return data.set_index('代碼').to_dict('index')
+    except: return {}
 
-def enforce_tick(df):
-    for c in ["Open","High","Low","Close"]:
-        df[c] = (df[c] / 0.05).round() * 0.05
-    return df
-
-@st.cache_data(ttl=3600)
-def fetch_tw_full(symbol, years=5):
-    dfs = []
-    now = datetime.today().year
-
-    for y in range(now-years+1, now+1):
-        d = fetch_tw_year(symbol, y)
-        if not d.empty:
-            dfs.append(d)
-
-    if not dfs:
-        return pd.DataFrame()
-
-    df = pd.concat(dfs)
-    df = df.drop_duplicates("Date").sort_values("Date")
-    df = df.set_index("Date")
-    return enforce_tick(df)
-
-# =================================================
-# V6 技術指標
-# =================================================
+STOCK_MAP = get_tw_map()
 
 def fetch_data_v6(symbol):
-    df = fetch_tw_full(symbol)
-    if df.empty or len(df) < 300:
-        return None
+    """抓取數據並修正為非還原股價以符合台股跳動單位"""
+    full_sym = f"{symbol}.TW"
+    # auto_adjust=False 確保拿到的是真實交易價格
+    ticker = yf.Ticker(full_sym)
+    df = ticker.history(period="2y", auto_adjust=False)
+    
+    if df.empty or len(df) < 10: 
+        df = yf.Ticker(f"{symbol}.TWO").history(period="2y", auto_adjust=False)
+    
+    if df.empty: return None
 
-    df["SMA20"] = df["Close"].rolling(20).mean()
-    df["SMA60"] = df["Close"].rolling(60).mean()
-    df["SMA240"] = df["Close"].rolling(240).mean()
-
-    std = df["Close"].rolling(20).std()
-    df["BB_pos"] = (df["Close"]-(df["SMA20"]-2*std))/(4*std+1e-9)*100
-
-    delta = df["Close"].diff()
+    # 計算技術指標
+    df['SMA20'] = df['Close'].rolling(20).mean()
+    df['SMA60'] = df['Close'].rolling(60).mean()
+    df['SMA240'] = df['Close'].rolling(240).mean()
+    
+    std = df['Close'].rolling(20).std()
+    df['BB_pos'] = (df['Close'] - (df['SMA20'] - 2*std)) / (4*std + 1e-9) * 100
+    
+    delta = df['Close'].diff()
     gain = delta.clip(lower=0).rolling(14).mean()
     loss = -delta.clip(upper=0).rolling(14).mean()
-    df["RSI"] = 100 - 100/(1+gain/(loss+1e-9))
-
-    df["EMA12"] = df["Close"].ewm(span=12, adjust=False).mean()
-    df["EMA26"] = df["Close"].ewm(span=26, adjust=False).mean()
-    df["DIF"] = df["EMA12"] - df["EMA26"]
-    df["DEA"] = df["DIF"].ewm(span=9, adjust=False).mean()
-    df["Hist"] = df["DIF"] - df["DEA"]
-
+    df['RSI'] = 100 - (100 / (1 + (gain/(loss+1e-9))))
+    
+    df['EMA12'] = df['Close'].ewm(span=12, adjust=False).mean()
+    df['EMA26'] = df['Close'].ewm(span=26, adjust=False).mean()
+    df['DIF'] = df['EMA12'] - df['EMA26']
+    df['DEA'] = df['DIF'].ewm(span=9, adjust=False).mean()
+    df['Hist'] = df['DIF'] - df['DEA']
     return df
 
 def get_v6_strategy(df):
-    r,p = df.iloc[-1], df.iloc[-2]
-    bull = r["Close"] > r["SMA240"]
-
+    if df is None or len(df) < 20: return "數據不足", "#999", 0
+    row = df.iloc[-1]
+    prev = df.iloc[-2]
+    bull = row['Close'] > row['SMA240'] if not pd.isna(row['SMA240']) else row['Close'] > row['SMA60']
+    
     score = 0
-    if r["RSI"] < (40 if bull else 30): score+=1
-    if r["BB_pos"] < 20: score+=1
-    if r["Hist"] > p["Hist"]: score+=1
-    if bull: score+=1
+    if row['RSI'] < (40 if bull else 30): score += 1
+    if row['BB_pos'] < 15: score += 1
+    if row['Hist'] > prev['Hist']: score += 1
+    if bull: score += 1
+    
+    if row['Close'] < row['SMA60'] and row['SMA20'] < row['SMA60']:
+        return "趨勢轉空", "#d32f2f", score
+    if score >= 3: return "強力買進", "#2e7d32", score
+    if score == 2: return "分批佈局", "#43a047", score
+    return ("多頭續抱" if bull else "觀望整理"), ("#1976d2" if bull else "#757575"), score
 
-    if score>=3: return "強力買進","green",score
-    if score==2: return "分批布局","orange",score
-    return ("多頭續抱" if bull else "觀望"),("blue" if bull else "gray"),score
-
-# =================================================
-# 圖表
-# =================================================
-
-def plot_chart(df, sym):
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                        row_heights=[0.55,0.2,0.25])
-
-    fig.add_trace(go.Candlestick(
-        x=df.index, open=df["Open"], high=df["High"],
-        low=df["Low"], close=df["Close"]), row=1,col=1)
-
-    fig.add_trace(go.Scatter(x=df.index,y=df["SMA20"],name="SMA20"),row=1,col=1)
-    fig.add_trace(go.Scatter(x=df.index,y=df["SMA240"],name="SMA240"),row=1,col=1)
-
-    fig.add_trace(go.Scatter(x=df.index,y=df["RSI"]),row=2,col=1)
-    fig.add_hline(y=70,row=2,col=1); fig.add_hline(y=30,row=2,col=1)
-
-    fig.add_trace(go.Bar(x=df.index,y=df["Hist"]),row=3,col=1)
-    fig.add_trace(go.Scatter(x=df.index,y=df["DIF"]),row=3,col=1)
-    fig.add_trace(go.Scatter(x=df.index,y=df["DEA"]),row=3,col=1)
-
-    fig.update_layout(height=750,xaxis_rangeslider_visible=False)
+def plot_v6_chart(df, name):
+    if df is None: return None
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
+                        row_heights=[0.5, 0.2, 0.3], vertical_spacing=0.03,
+                        subplot_titles=(f"{name} 股價/均線", "RSI", "MACD"))
+    
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='K線'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['SMA20'], line=dict(color='orange', width=1), name='月線'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['SMA240'], line=dict(color='purple', width=2), name='年線'), row=1, col=1)
+    
+    fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='#9370DB'), name='RSI'), row=2, col=1)
+    
+    colors = ['#2E8B57' if v >= 0 else '#CD5C5C' for v in df['Hist']]
+    fig.add_trace(go.Bar(x=df.index, y=df['Hist'], marker_color=colors, name='MACD柱'), row=3, col=1)
+    
+    fig.update_layout(height=700, xaxis_rangeslider_visible=False, margin=dict(t=50, b=20))
     return fig
 
-# =================================================
-# UI
-# =================================================
+# --- 2. 介面渲染 ---
+portfolio = load_portfolio()
 
-st.title("📊 台股 V6 指揮中心（官方資料 × 完整版）")
+# A. 頂部 Bar
+st.markdown('<div class="metric-bar">', unsafe_allow_html=True)
+t_mkt, t_cost, monitored_data = 0.0, 0.0, []
+if not portfolio.empty:
+    for _, r in portfolio.iterrows():
+        d = fetch_data_v6(r['Symbol'])
+        if d is not None:
+            cp = d['Close'].iloc[-1]
+            t_mkt += cp * r['Shares']
+            t_cost += r['Cost'] * r['Shares']
+            monitored_data.append({'r': r, 'df': d, 'cp': cp})
 
-tab1, tab2 = st.tabs(["💰 低基期 / 單股分析","🔍 快速個股查詢"])
+p1, p2, p3 = st.columns(3)
+p1.metric("總市值", f"${t_mkt:,.0f}")
+p2.metric("未實現損益", f"${(t_mkt-t_cost):,.0f}", f"{((t_mkt-t_cost)/t_cost*100 if t_cost>0 else 0):.2f}%")
+p3.metric("總投入", f"${t_cost:,.0f}")
+st.markdown('</div>', unsafe_allow_html=True)
 
-def render(symbol):
-    df = fetch_data_v6(symbol)
-    if df is None:
-        st.error("歷史資料不足（需約 300 根 K）")
-        return
+# B. 雙欄佈局
+main_col, side_col = st.columns([0.6, 0.4])
 
-    adv,col,sc = get_v6_strategy(df)
-    last = df.iloc[-1]
+with main_col:
+    st.subheader("🚀 庫存個股監控")
+    if monitored_data:
+        m_cols = st.columns(2)
+        for i, item in enumerate(monitored_data):
+            with m_cols[i % 2]:
+                adv, col, sc = get_v6_strategy(item['df'])
+                st.markdown(f"""
+                <div class="stock-card" style="border-left: 8px solid {col}">
+                    <h4 style="margin:0">{item['r']['Name']} ({item['r']['Symbol']})</h4>
+                    <h2 style="margin:5px 0; color:#333">${item['cp']:.2f}</h2>
+                    <p style="color:{col}; font-weight:bold; margin:0">{adv} | 評分: {sc}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button(f"分析圖表", key=f"btn_{item['r']['Symbol']}"):
+                    st.session_state.current_plot = (item['df'], item['r']['Name'])
 
-    c1,c2,c3 = st.columns(3)
-    c1.metric("收盤價",f"{last['Close']:.2f}")
-    c2.metric("RSI",f"{last['RSI']:.1f}")
-    c3.metric("策略評分",sc)
+with side_col:
+    tab1, tab2 = st.tabs(["💰 低基期快篩", "🔍 免庫存診斷"])
+    
+    with tab1:
+        c1, c2 = st.columns(2)
+        pe_lim = c1.number_input("PE 上限", value=15.0)
+        pb_lim = c2.number_input("PB 上限", value=1.5)
+        
+        if st.button("🔍 開始掃描低基期標的"):
+            # 增加篩選邏輯，確保 PE > 0
+            results = [k for k, v in STOCK_MAP.items() if 0 < float(v['PE']) <= pe_lim and 0 < float(v['PB']) <= pb_lim]
+            st.session_state.scan_list = random.sample(results, min(len(results), 10))
+            
+        if 'scan_list' in st.session_state:
+            for code in st.session_state.scan_list:
+                with st.expander(f"📌 {code} {STOCK_MAP[code]['名稱']} (PE: {STOCK_MAP[code]['PE']})"):
+                    s_df = fetch_data_v6(code)
+                    if s_df is not None:
+                        adv, col, sc = get_v6_strategy(s_df)
+                        st.markdown(f"**目前評分：<span style='color:{col}'>{adv} ({sc}分)</span>**", unsafe_allow_html=True)
+                        st.write(f"現價：{s_df['Close'].iloc[-1]:.2f}")
+                        if st.button("查看完整圖表", key=f"scan_btn_{code}"):
+                            st.session_state.current_plot = (s_df, STOCK_MAP[code]['名稱'])
 
-    st.markdown(f"### <span style='color:{col}'>{adv}</span>",unsafe_allow_html=True)
-    st.plotly_chart(plot_chart(df,symbol),use_container_width=True)
+    with tab2:
+        target = st.text_input("輸入代碼 (例如: 3047)", key="search_input")
+        if target:
+            s_df = fetch_data_v6(target)
+            if s_df is not None:
+                name = STOCK_MAP.get(target, {'名稱': '未知'})['名稱']
+                adv, col, sc = get_v6_strategy(s_df)
+                st.markdown(f"""
+                <div class="stock-card" style="background-color:#f9f9f9; border-top: 4px solid {col}">
+                    <h4>{name} ({target})</h4>
+                    <h3 style="color:{col}">{adv} (評分: {sc})</h3>
+                    <p>最新收盤價: {s_df['Close'].iloc[-1]:.2f}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button("顯示技術分析圖", key="search_plot_btn"):
+                    st.session_state.current_plot = (s_df, name)
 
-with tab1:
-    s = st.text_input("股票代碼（如 3047）")
-    if st.button("開始分析"):
-        render(s)
-
-with tab2:
-    s2 = st.text_input("股票代碼",key="q")
-    if st.button("查詢"):
-        render(s2)
+# C. 底部圖表
+if 'current_plot' in st.session_state:
+    st.divider()
+    plot_df, plot_name = st.session_state.current_plot
+    st.plotly_chart(plot_v6_chart(plot_df, plot_name), use_container_width=True)
