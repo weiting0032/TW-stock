@@ -718,7 +718,7 @@ if st.session_state.quick_search_result:
 # 正常庫存模式 (預設畫面)
 portfolio = st.session_state.portfolio_df
 if portfolio.empty:
-    st.title("🚀 台股戰情分析室 V3.4 (Google Sheet 持久化)")
+    st.title("🚀 台股戰情分析室")
     st.info("⚠️ 警告：Google Sheet 載入失敗或庫存為空。\n\n請在側邊欄 **「新增/更新 監控標的」** 中加入您的股票，或使用 **「低基期標的快篩」** 尋找潛力標的。")
     st.stop()
 
@@ -733,7 +733,7 @@ if 'selected_symbol_main' not in st.session_state or st.session_state.selected_s
         st.stop()
 
 col1, col2 = st.columns([3, 2])
-with col1: st.title("🚀 台股戰情分析室 V3.4 (Google Sheet 持久化)")
+with col1: st.title("🚀 台股戰情分析室")
 with col2: 
     # 確保 sel_opt 存在於 options 中，防止讀取失敗導致錯誤
     try:
@@ -872,5 +872,6 @@ with tab2:
 with tab3:
     st.subheader(f"📋 {stock_name} 原始數據檢視")
     st.dataframe(df_an.sort_index(ascending=False), use_container_width=True)
+
 
 
