@@ -10,7 +10,7 @@ import random
 
 # --- 0. 基礎設定 ---
 PORTFOLIO_SHEET_TITLE = 'Streamlit TW Stock' 
-st.set_page_config(page_title="台股戰情指揮中心 V10.0", layout="wide", page_icon="📈")
+st.set_page_config(page_title="台股戰情指揮中心 V10.1", layout="wide", page_icon="📈")
 
 st.markdown("""
     <style>
@@ -72,17 +72,20 @@ def fetch_yf_history(symbol):
         if df.empty:
             df = yf.Ticker(f"{symbol}.TWO").history(period="2y", auto_adjust=False)
         
-        # 指標計算: SMA
-        df['SMA20'] = df['Close'].rolling(20).mean()
-        df['SMA60'] = df['Close'].rolling(60).mean()
+        if df.empty: return None
+
+        # --- 技術指標計算 ---
+        # 1. 均線
+        df['SMA20'] = df['Close'].rolling(window=20).mean()
+        df['SMA60'] = df['Close'].rolling(window=60).mean()
         
-        # 指標計算: RSI
+        # 2. RSI
         delta = df['Close'].diff()
-        gain = delta.clip(lower=0).rolling(14).mean()
-        loss = -delta.clip(upper=0).rolling(14).mean()
-        df['RSI'] = 100 - (100 / (1 + (gain/(loss+1e-9))))
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        df['RSI'] = 100 - (100 / (1 + (gain / (loss + 1e-9))))
         
-        # 指標計算: MACD
+        # 3. MACD (核心修正處)
         exp1 = df['Close'].ewm(span=12, adjust=False).mean()
         exp2 = df['Close'].ewm(span=26, adjust=False).mean()
         df['MACD'] = exp1 - exp2
@@ -90,10 +93,18 @@ def fetch_yf_history(symbol):
         df['Hist'] = df['MACD'] - df['Signal']
         
         return df
-    except: return None
+    except Exception as e:
+        st.error(f"獲取歷史數據錯誤 ({symbol}): {e}")
+        return None
 
 def plot_technical_analysis(p_df, p_name):
-    """繪製包含股價、RSI、MACD 的圖表"""
+    """繪製包含股價、RSI、MACD 的圖表 (含欄位檢查)"""
+    # 檢查必要欄位
+    required_cols = ['MACD', 'Signal', 'Hist', 'RSI']
+    if not all(col in p_df.columns for col in required_cols):
+        st.error(f"數據庫中缺少技術指標欄位，請嘗試清除快取。")
+        return
+
     fig = make_subplots(
         rows=3, cols=1, 
         shared_xaxes=True, 
@@ -102,7 +113,7 @@ def plot_technical_analysis(p_df, p_name):
         subplot_titles=(f"📈 {p_name} 股價 K 線與均線", "📊 RSI 強弱指標", "📉 MACD 指標")
     )
     
-    # 1. 股價 K 線 + 均線
+    # 1. 股價 K 線
     fig.add_trace(go.Candlestick(x=p_df.index, open=p_df['Open'], high=p_df['High'], low=p_df['Low'], close=p_df['Close'], name='K線'), row=1, col=1)
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['SMA20'], line=dict(color='orange', width=1), name='20MA'), row=1, col=1)
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['SMA60'], line=dict(color='blue', width=1), name='60MA'), row=1, col=1)
@@ -115,10 +126,11 @@ def plot_technical_analysis(p_df, p_name):
     # 3. MACD
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['MACD'], line=dict(color='blue'), name='DIF'), row=3, col=1)
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['Signal'], line=dict(color='red'), name='MACD'), row=3, col=1)
-    colors = ['red' if val >= 0 else 'green' for val in p_df['Hist']]
+    # 柱狀圖顏色判斷
+    colors = ['#eb093b' if val >= 0 else '#00a651' for val in p_df['Hist']]
     fig.add_trace(go.Bar(x=p_df.index, y=p_df['Hist'], marker_color=colors, name='OSC'), row=3, col=1)
     
-    fig.update_layout(height=800, xaxis_rangeslider_visible=False, showlegend=False)
+    fig.update_layout(height=800, xaxis_rangeslider_visible=False, showlegend=False, margin=dict(t=50, b=50))
     st.plotly_chart(fig, use_container_width=True)
 
 # --- 2. 側邊導覽 ---
@@ -132,7 +144,7 @@ with st.sidebar:
 
 portfolio = load_portfolio()
 
-# --- 各頁面邏輯 ---
+# --- 各頁面邏輯 (與 V10 相同) ---
 if st.session_state.menu == "portfolio":
     st.subheader("🚀 庫存動態監控")
     if not portfolio.empty:
@@ -146,19 +158,27 @@ if st.session_state.menu == "portfolio":
                 total_cost += r['Cost'] * r['Shares']
                 details.append({'r': r, 'm': m_data, 'cp': cp})
 
-        # 總計面板 (省略 HTML 部份保持簡短，與您原版相同)
         diff = total_mv - total_cost
         p_ratio = (diff / total_cost * 100) if total_cost > 0 else 0
-        st.write(f"### 目前總損益: {p_ratio:.2f}% (${diff:,.0f})")
+        
+        st.markdown(f"""
+            <div class="metric-container">
+                <div class="metric-item"><div class="metric-label">總市值</div><div class="metric-value">${total_mv:,.0f}</div></div>
+                <div class="metric-item"><div class="metric-label">未實現損益</div>
+                    <div class="metric-value {'profit-up' if diff>=0 else 'profit-down'}">{'+' if diff>=0 else ''}{p_ratio:.2f}%</div>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
 
         cols = st.columns(3)
         for i, item in enumerate(details):
             r, m, cp = item['r'], item['m'], item['cp']
             with cols[i % 3]:
-                st.markdown(f'<div class="stock-card"><b>{r["Name"]}</b><br>現價: {cp}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="stock-card"><b>{r["Name"]} ({r["Symbol"]})</b><br>現價: ${cp}</div>', unsafe_allow_html=True)
                 if st.button(f"技術分析 {r['Symbol']}", key=f"btn_{r['Symbol']}"):
-                    df = fetch_yf_history(r['Symbol'])
-                    if df is not None: st.session_state.current_plot = (df, r['Name'])
+                    with st.spinner('加載數據...'):
+                        df = fetch_yf_history(r['Symbol'])
+                        if df is not None: st.session_state.current_plot = (df, r['Name'])
 
 elif st.session_state.menu == "screening":
     st.subheader("💰 低基期潛力標的快篩")
@@ -172,7 +192,6 @@ elif st.session_state.menu == "screening":
             if 0 < v['PE'] <= pe_lim and 0 < v['PB'] <= pb_lim:
                 results.append({'代碼': k, **v})
         
-        # 關鍵排序：族群(產業) -> PE(低到高) -> PB(低到高)
         df_res = pd.DataFrame(results)
         if not df_res.empty:
             df_res = df_res.sort_values(by=['產業', 'PE', 'PB'], ascending=True)
@@ -202,8 +221,15 @@ elif st.session_state.menu == "management":
     st.subheader("📝 庫存清單管理")
     edited = st.data_editor(portfolio, hide_index=True, use_container_width=True)
     if st.button("💾 儲存變更"):
-        # 儲存邏輯與原版相同...
-        st.success("已儲存")
+        try:
+            gc = get_gsheet_client()
+            sh = gc.open(PORTFOLIO_SHEET_TITLE).sheet1
+            sh.clear()
+            sh.update('A1', [portfolio.columns.tolist()] + edited.values.tolist())
+            st.success("已儲存變更")
+            st.cache_data.clear()
+        except Exception as e:
+            st.error(f"儲存失敗: {e}")
 
 # --- 3. 底部圖表顯示 ---
 if 'current_plot' in st.session_state:
