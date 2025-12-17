@@ -16,7 +16,7 @@ PORTFOLIO_SHEET_TITLE = 'Streamlit TW Stock' # <--- 請務必在這裡替換成�
 STOCK_MAP_FILE = 'tw_stock_map.csv' # 仍保留本地快取
 
 # 版本說明修改
-st.set_page_config(page_title="台股戰情指揮中心 V3.4 (Google Sheet 持久化)", layout="wide", page_icon="📈")
+st.set_page_config(page_title="台股戰情指揮中心", layout="wide", page_icon="📈")
 
 # 自訂 CSS
 st.markdown("""
@@ -872,4 +872,5 @@ with tab2:
 with tab3:
     st.subheader(f"📋 {stock_name} 原始數據檢視")
     st.dataframe(df_an.sort_index(ascending=False), use_container_width=True)
+
 
