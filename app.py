@@ -11,7 +11,7 @@ import numpy as np
 
 # --- 0. 基礎設定 ---
 PORTFOLIO_SHEET_TITLE = 'Streamlit TW Stock' 
-st.set_page_config(page_title="台股戰情指揮中心 V6.6", layout="wide", page_icon="📈")
+st.set_page_config(page_title="台股戰情指揮中心 V6.7", layout="wide", page_icon="📈")
 
 # 自訂 CSS
 st.markdown("""
@@ -19,6 +19,7 @@ st.markdown("""
     .stock-card { border: 1px solid #ddd; padding: 20px; border-radius: 15px; background-color: white; box-shadow: 3px 3px 10px rgba(0,0,0,0.05); margin-bottom: 15px; }
     .metric-bar { background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%); color: white; padding: 25px; border-radius: 15px; margin-bottom: 25px; }
     .stButton>button { width: 100%; border-radius: 10px; height: 3em; font-weight: bold; }
+    .group-tag { background-color: #f0f2f6; color: #555; padding: 2px 8px; border-radius: 5px; font-size: 0.8em; margin-left: 5px; vertical-align: middle; }
     .info-label { color: #666; font-size: 0.9em; }
     </style>
 """, unsafe_allow_html=True)
@@ -51,8 +52,8 @@ def get_tw_map():
         return {}
 
 STOCK_MAP = get_tw_map()
-# 建立一個供 selectbox 使用的格式清單: ["2330 台積電", "3047 訊舟", ...]
-STOCK_OPTIONS = [f"{k} {v['名稱']}" for k, v in STOCK_MAP.items()]
+# 建立包含族群資訊的選單清單: ["2330 台積電 (半導體業)", ...]
+STOCK_OPTIONS = [f"{k} {v['名稱']} ({v['產業']})" for k, v in STOCK_MAP.items()]
 
 def fetch_data_v6(symbol):
     time.sleep(random.uniform(0.1, 0.3)) 
@@ -63,7 +64,8 @@ def fetch_data_v6(symbol):
         if df.empty or len(df) < 10:
             df = yf.Ticker(f"{symbol}.TWO").history(period="2y", auto_adjust=False)
         if df.empty: return None
-        # 技術指標計算
+        
+        # 指標計算
         df['SMA20'] = df['Close'].rolling(20).mean()
         df['SMA60'] = df['Close'].rolling(60).mean()
         df['SMA240'] = df['Close'].rolling(240).mean()
@@ -118,10 +120,8 @@ with st.sidebar:
 # --- 3. 主畫面 ---
 portfolio = load_portfolio()
 st.markdown('<div class="metric-bar">', unsafe_allow_html=True)
-# 快速統計總資產 (略過圖表繪製)
 t_mkt, t_cost = 0.0, 0.0
 for _, r in portfolio.iterrows():
-    # 僅獲取最後一筆價格以加速首頁加載
     ticker = yf.Ticker(f"{r['Symbol']}.TW")
     hist = ticker.history(period="1d")
     if hist.empty: hist = yf.Ticker(f"{r['Symbol']}.TWO").history(period="1d")
@@ -131,8 +131,8 @@ for _, r in portfolio.iterrows():
         t_cost += r['Cost'] * r['Shares']
 p1, p2, p3 = st.columns(3)
 p1.metric("總市值", f"${t_mkt:,.0f}")
-p2.metric("未實現損益", f"${(t_mkt-t_cost):,.0f}", f"{((t_mkt-t_cost)/t_cost*100 if t_cost>0 else 0):.2f}%")
-p3.metric("總成本", f"${t_cost:,.0f}")
+p2.metric("總損益", f"${(t_mkt-t_cost):,.0f}", f"{((t_mkt-t_cost)/t_cost*100 if t_cost>0 else 0):.2f}%")
+p3.metric("總投入成本", f"${t_cost:,.0f}")
 st.markdown('</div>', unsafe_allow_html=True)
 
 if st.session_state.menu == "portfolio":
@@ -142,42 +142,66 @@ if st.session_state.menu == "portfolio":
         d = fetch_data_v6(r['Symbol'])
         if d is not None:
             adv, col, sc = get_v6_strategy(d)
-            info = STOCK_MAP.get(r['Symbol'], {'PE':'-', 'PB':'-'})
+            # 獲取族群資訊
+            info = STOCK_MAP.get(r['Symbol'], {'PE':'-', 'PB':'-', '產業': '未知'})
             with cols[i % 3]:
-                st.markdown(f'<div class="stock-card" style="border-top:5px solid {col}"><b>{r["Name"]} ({r["Symbol"]})</b><br><span style="font-size:1.5em;font-weight:bold;">${d["Close"].iloc[-1]:.2f}</span><br><span style="color:{col}">{adv} ({sc}分)</span><br><small>PE: {info["PE"]} | PB: {info["PB"]}</small></div>', unsafe_allow_html=True)
-                if st.button(f"看分析", key=f"p_{r['Symbol']}"): st.session_state.current_plot = (d, r['Name'])
+                st.markdown(f"""
+                <div class="stock-card" style="border-top:5px solid {col}">
+                    <b>{r['Name']} ({r['Symbol']})</b> <span class="group-tag">{info['產業']}</span><br>
+                    <span style="font-size:1.6em;font-weight:bold;">${d['Close'].iloc[-1]:.2f}</span><br>
+                    <span style="color:{col}; font-weight:bold;">{adv} ({sc}分)</span><br>
+                    <small>PE: {info['PE']} | PB: {info['PB']}</small>
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button(f"查看技術圖表", key=f"p_{r['Symbol']}"): st.session_state.current_plot = (d, r['Name'])
 
 elif st.session_state.menu == "screening":
-    st.subheader("💰 低基期潛力標的快篩 (滿足條件全顯示)")
+    st.subheader("💰 低基期潛力標的快篩")
     c1, c2, c3 = st.columns([2, 2, 1])
     pe_lim = c1.number_input("PE 上限", value=15.0)
     pb_lim = c2.number_input("PB 上限", value=1.2)
-    if c3.button("開始掃描"):
-        # 🚨 修正：移除 random.sample，顯示所有符合標的
+    if c3.button("開始全面掃描"):
         st.session_state.scan_results = [k for k, v in STOCK_MAP.items() if 0 < float(v['PE']) <= pe_lim and 0 < float(v['PB']) <= pb_lim]
     
     if 'scan_results' in st.session_state:
-        st.write(f"共找到 {len(st.session_state.scan_results)} 筆符合條件標的")
+        st.info(f"符合條件標的共 {len(st.session_state.scan_results)} 筆")
         sc_cols = st.columns(3)
         for i, code in enumerate(st.session_state.scan_results):
             with sc_cols[i % 3]:
                 name = STOCK_MAP[code]['名稱']
-                st.markdown(f'<div class="stock-card"><b>{code} {name}</b><br>PE: {STOCK_MAP[code]["PE"]} | PB: {STOCK_MAP[code]["PB"]}</div>', unsafe_allow_html=True)
-                if st.button(f"診斷 {code}", key=f"sc_{code}"):
+                group = STOCK_MAP[code]['產業']
+                st.markdown(f"""
+                <div class="stock-card">
+                    <b>{code} {name}</b> <br><small>{group}</small><br>
+                    <hr style="margin:8px 0;">
+                    PE: {STOCK_MAP[code]['PE']} | PB: {STOCK_MAP[code]['PB']}
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button(f"執行診斷 {code}", key=f"sc_{code}"):
                     d = fetch_data_v6(code)
                     if d is not None: st.session_state.current_plot = (d, name)
 
 elif st.session_state.menu == "diagnosis":
     st.subheader("🔍 免庫存個股診斷分析")
-    # 🚨 修正：智慧型選擇器，支援中文/代碼過濾
-    selection = st.selectbox("搜尋標的 (可輸入代碼或中文名稱)", options=["請選擇..."] + STOCK_OPTIONS)
-    if st.button("送出診斷") and selection != "請選擇...":
+    selection = st.selectbox("搜尋標的 (輸入代碼、名稱或族群關鍵字)", options=["請選擇股票..."] + STOCK_OPTIONS)
+    if st.button("開始診斷") and selection != "請選擇股票...":
         target_code = selection.split(" ")[0]
         q_df = fetch_data_v6(target_code)
         if q_df is not None:
             name = STOCK_MAP.get(target_code, {'名稱': '未知'})['名稱']
+            group = STOCK_MAP.get(target_code, {'產業': '未知'})['產業']
             adv, col, sc = get_v6_strategy(q_df)
-            st.markdown(f'<div class="stock-card" style="border-top:8px solid {col}"><h2>{name} ({target_code})</h2><h3>建議：<span style="color:{col}">{adv}</span> ({sc}分)</h3>現價：${q_df["Close"].iloc[-1]:.2f}</div>', unsafe_allow_html=True)
+            st.markdown(f"""
+            <div class="stock-card" style="border-top:8px solid {col}; background-color: #fbfbfb;">
+                <div style="font-size:1.8em; font-weight:bold;">{name} ({target_code}) <span style="font-size:0.5em; font-weight:normal; color:#888;">{group}</span></div>
+                <hr>
+                <div style="display:flex; justify-content: space-around; text-align:center;">
+                    <div><small>建議</small><br><b style="font-size:1.5em; color:{col};">{adv}</b></div>
+                    <div><small>策略評分</small><br><b style="font-size:1.5em;">{sc} 分</b></div>
+                    <div><small>當前價格</small><br><b style="font-size:1.5em;">${q_df['Close'].iloc[-1]:.2f}</b></div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
             st.session_state.current_plot = (q_df, name)
 
 if 'current_plot' in st.session_state:
