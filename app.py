@@ -12,7 +12,6 @@ import random
 PORTFOLIO_SHEET_TITLE = 'Streamlit TW Stock' 
 st.set_page_config(page_title="台股戰情指揮中心 V10.0", layout="wide", page_icon="📈")
 
-# 自定義 CSS
 st.markdown("""
     <style>
     .stock-card { border: 1px solid #eee; padding: 18px; border-radius: 12px; background-color: white; box-shadow: 2px 2px 8px rgba(0,0,0,0.05); margin-bottom: 15px; }
@@ -73,23 +72,22 @@ def fetch_yf_history(symbol):
         if df.empty:
             df = yf.Ticker(f"{symbol}.TWO").history(period="2y", auto_adjust=False)
         
-        # --- 技術指標計算 ---
-        # 均線
+        # 指標計算：MA
         df['SMA20'] = df['Close'].rolling(20).mean()
         df['SMA60'] = df['Close'].rolling(60).mean()
         
-        # RSI
+        # 指標計算：RSI
         delta = df['Close'].diff()
         gain = delta.clip(lower=0).rolling(14).mean()
         loss = -delta.clip(upper=0).rolling(14).mean()
         df['RSI'] = 100 - (100 / (1 + (gain/(loss+1e-9))))
         
-        # MACD (12, 26, 9)
+        # 指標計算：MACD
         exp1 = df['Close'].ewm(span=12, adjust=False).mean()
         exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-        df['MACD_DIF'] = exp1 - exp2
-        df['MACD_Signal'] = df['MACD_DIF'].ewm(span=9, adjust=False).mean()
-        df['MACD_Hist'] = df['MACD_DIF'] - df['MACD_Signal']
+        df['MACD'] = exp1 - exp2
+        df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        df['Hist'] = df['MACD'] - df['Signal']
         
         return df
     except: return None
@@ -105,9 +103,9 @@ with st.sidebar:
 
 portfolio = load_portfolio()
 
-# --- 各功能區塊邏輯 (保持原樣，僅更新 UI 調用) ---
+# --- 各功能區塊 ---
 if st.session_state.menu == "portfolio":
-    st.subheader("🚀 庫存動態監控 (數據來源: Wespai)")
+    st.subheader("🚀 庫存動態監控")
     if not portfolio.empty:
         total_mv, total_cost = 0.0, 0.0
         details = []
@@ -139,48 +137,37 @@ if st.session_state.menu == "portfolio":
             r, m, cp = item['r'], item['m'], item['cp']
             p_pct = (cp - r['Cost']) / r['Cost'] * 100 if r['Cost'] > 0 else 0
             with cols[i % 3]:
-                st.markdown(f"""
-                <div class="stock-card">
-                    <div style="display:flex; justify-content:space-between;"><b>{r['Name']} ({r['Symbol']})</b> <span class="group-tag">{m['產業']}</span></div>
-                    <div style="margin:10px 0;">
-                        <span style="font-size:1.6em;font-weight:bold;">${cp:.2f}</span>
-                        <span class="{'profit-up' if p_pct>=0 else 'profit-down'}" style="margin-left:10px;">{'+' if p_pct>=0 else ''}{p_pct:.2f}%</span>
-                    </div>
-                    <div style="font-size:0.85em; color:#666; border-top:1px dashed #eee; padding-top:8px;">
-                        PE: {m['PE']} | PB: {m['PB']} | 成本: {r['Cost']}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown(f"""<div class="stock-card">
+                    <b>{r['Name']} ({r['Symbol']})</b> <span class="group-tag">{m['產業']}</span><br>
+                    <span style="font-size:1.6em;font-weight:bold;">${cp:.2f}</span>
+                    <span class="{'profit-up' if p_pct>=0 else 'profit-down'}">{'+' if p_pct>=0 else ''}{p_pct:.2f}%</span>
+                </div>""", unsafe_allow_html=True)
                 if st.button(f"查看技術分析 {r['Symbol']}", key=f"btn_{r['Symbol']}"):
-                    with st.spinner('抓取歷史 K 線中...'):
-                        df = fetch_yf_history(r['Symbol'])
-                        if df is not None: st.session_state.current_plot = (df, r['Name'])
+                    df = fetch_yf_history(r['Symbol'])
+                    if df is not None: st.session_state.current_plot = (df, r['Name'])
 
 elif st.session_state.menu == "screening":
-    st.subheader("💰 低基期潛力標的快篩")
+    st.subheader("💰 低基期快篩")
     c1, c2, c3 = st.columns([2, 2, 1])
     pe_lim = c1.number_input("PE 本益比上限", value=15.0)
     pb_lim = c2.number_input("PB 淨值比上限", value=1.2)
     if c3.button("啟動掃描"):
         results = [{'代碼': k, '名稱': v['名稱'], '產業': v['產業'], '現價': v['現價'], 'PE': v['PE'], 'PB': v['PB']} 
                    for k, v in MARKET_MAP.items() if 0 < v['PE'] <= pe_lim and 0 < v['PB'] <= pb_lim]
-        df_res = pd.DataFrame(results).sort_values(by=['產業', 'PE', 'PB'])
-        st.session_state.scan_results_df = df_res
-
+        st.session_state.scan_results_df = pd.DataFrame(results).sort_values(by=['產業', 'PE'])
+    
     if 'scan_results_df' in st.session_state:
         df_display = st.session_state.scan_results_df
-        if not df_display.empty:
-            st.info(f"符合標的共 {len(df_display)} 筆")
-            sc_cols = st.columns(3)
-            for i, (idx, row) in enumerate(df_display.iterrows()):
-                with sc_cols[i % 3]:
-                    st.markdown(f"""<div class="stock-card"><b>{row['代碼']} {row['名稱']}</b><br>現價: ${row['現價']}</div>""", unsafe_allow_html=True)
-                    if st.button(f"技術診斷 {row['代碼']}", key=f"sc_{row['代碼']}"):
-                        df_hist = fetch_yf_history(row['代碼'])
-                        if df_hist is not None: st.session_state.current_plot = (df_hist, row['名稱'])
+        sc_cols = st.columns(3)
+        for i, (idx, row) in enumerate(df_display.iterrows()):
+            with sc_cols[i % 3]:
+                st.markdown(f"""<div class="stock-card"><b>{row['代碼']} {row['名稱']}</b><br>現價: ${row['現價']} | PE: {row['PE']}</div>""", unsafe_allow_html=True)
+                if st.button(f"技術診斷 {row['代碼']}", key=f"sc_{row['代碼']}"):
+                    df_hist = fetch_yf_history(row['代碼'])
+                    if df_hist is not None: st.session_state.current_plot = (df_hist, row['名稱'])
 
 elif st.session_state.menu == "diagnosis":
-    st.subheader("🔍 全市場技術分析")
+    st.subheader("🔍 免庫存診斷")
     selection = st.selectbox("搜尋標的", options=["請選擇..."] + STOCK_OPTIONS)
     if st.button("執行診斷") and selection != "請選擇...":
         code, name = selection.split(" ")[0], selection.split(" ")[1]
@@ -188,52 +175,47 @@ elif st.session_state.menu == "diagnosis":
         if df is not None: st.session_state.current_plot = (df, name)
 
 elif st.session_state.menu == "management":
-    st.subheader("📝 庫存清單管理")
+    st.subheader("📝 庫存管理")
     edited = st.data_editor(portfolio, hide_index=True, use_container_width=True)
-    if st.button("💾 儲存所有變更"):
+    if st.button("💾 儲存"):
         gc = get_gsheet_client(); sh = gc.open(PORTFOLIO_SHEET_TITLE).sheet1
         sh.clear(); sh.update('A1', [portfolio.columns.tolist()] + edited.values.tolist())
         st.cache_data.clear(); st.rerun()
 
-# --- 底部圖表顯示: 包含 MACD 與 功能標示 ---
+# --- 底部圖表顯示 (新增 MACD 與 功能名稱標籤) ---
 if 'current_plot' in st.session_state:
     st.divider()
     p_df, p_name = st.session_state.current_plot
     
-    # 建立三層子圖
+    # 建立三層子圖：K線(50%)、RSI(25%)、MACD(25%)
     fig = make_subplots(
         rows=3, cols=1, 
         shared_xaxes=True, 
-        vertical_spacing=0.08,
+        vertical_spacing=0.05,
         row_heights=[0.5, 0.25, 0.25],
-        subplot_titles=("【 趨勢 K 線圖 】", "【 MACD 指標 (12, 26, 9) 】", "【 RSI 強弱指標 】")
+        subplot_titles=("【 K線與均線分析 】", "【 RSI 強弱指標 】", "【 MACD 趨勢指標 】")
     )
 
-    # 1. K線與均線
+    # 1. K線圖
     fig.add_trace(go.Candlestick(x=p_df.index, open=p_df['Open'], high=p_df['High'], low=p_df['Low'], close=p_df['Close'], name='K線'), row=1, col=1)
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['SMA20'], line=dict(color='orange', width=1), name='20MA'), row=1, col=1)
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['SMA60'], line=dict(color='blue', width=1), name='60MA'), row=1, col=1)
 
-    # 2. MACD
-    fig.add_trace(go.Scatter(x=p_df.index, y=p_df['MACD_DIF'], line=dict(color='#17BECF', width=1.5), name='DIF (快線)'), row=2, col=1)
-    fig.add_trace(go.Scatter(x=p_df.index, y=p_df['MACD_Signal'], line=dict(color='#7F7F7F', width=1.5), name='MACD (慢線)'), row=2, col=1)
-    # MACD 柱狀圖顏色區分
-    colors = ['#eb093b' if val >= 0 else '#00a651' for val in p_df['MACD_Hist']]
-    fig.add_trace(go.Bar(x=p_df.index, y=p_df['MACD_Hist'], name='OSC (柱狀圖)', marker_color=colors), row=2, col=1)
+    # 2. RSI
+    fig.add_trace(go.Scatter(x=p_df.index, y=p_df['RSI'], line=dict(color='purple'), name='RSI'), row=2, col=1)
+    fig.add_shape(type="line", x0=p_df.index[0], x1=p_df.index[-1], y0=70, y1=70, line=dict(color="red", dash="dash"), row=2, col=1)
+    fig.add_shape(type="line", x0=p_df.index[0], x1=p_df.index[-1], y0=30, y1=30, line=dict(color="green", dash="dash"), row=2, col=1)
 
-    # 3. RSI
-    fig.add_trace(go.Scatter(x=p_df.index, y=p_df['RSI'], line=dict(color='purple', width=1.5), name='RSI'), row=3, col=1)
-    # RSI 門檻線
-    fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
-    fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
+    # 3. MACD
+    fig.add_trace(go.Scatter(x=p_df.index, y=p_df['MACD'], line=dict(color='blue'), name='DIF'), row=3, col=1)
+    fig.add_trace(go.Scatter(x=p_df.index, y=p_df['Signal'], line=dict(color='orange'), name='DEA'), row=3, col=1)
+    # MACD 柱狀圖
+    colors = ['red' if val >= 0 else 'green' for val in p_df['Hist']]
+    fig.add_trace(go.Bar(x=p_df.index, y=p_df['Hist'], marker_color=colors, name='MACD柱'), row=3, col=1)
 
-    # 圖表佈局優化
-    fig.update_layout(
-        height=900, 
-        xaxis_rangeslider_visible=False, 
-        title=f"📈 {p_name} 綜合技術分析報告",
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    
+    fig.update_layout(height=800, xaxis_rangeslider_visible=False, title=f"📊 {p_name} 深度技術分析報告")
     st.plotly_chart(fig, use_container_width=True)
+
+    if st.button("關閉圖表"):
+        del st.session_state.current_plot
+        st.rerun()
