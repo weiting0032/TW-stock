@@ -10,7 +10,7 @@ import random
 
 # --- 0. 基礎設定 ---
 PORTFOLIO_SHEET_TITLE = 'Streamlit TW Stock' 
-st.set_page_config(page_title="台股戰情指揮中心 V10.0", layout="wide", page_icon="📈")
+st.set_page_config(page_title="台股戰情指揮中心 V11.0", layout="wide", page_icon="📈")
 
 st.markdown("""
     <style>
@@ -64,6 +64,65 @@ def get_market_data():
 MARKET_MAP = get_market_data()
 STOCK_OPTIONS = [f"{k} {v['名稱']} ({v['產業']})" for k, v in MARKET_MAP.items()]
 
+def get_strategy_suggestion(df):
+    if df.empty or len(df) < 26: 
+        return ("資料不足", "#9e9e9e", "<span>資料不足以產生訊號</span>", "")
+    last_row = df.iloc[-1]
+    prev_row = df.iloc[-2]
+    curr_price = last_row['Close']
+    rsi = last_row['RSI']
+    macd_hist = last_row['Hist']
+    prev_macd_hist = prev_row['Hist']
+    bb_lower = last_row['Lower']
+    sma20 = last_row['SMA20']
+    sma60 = last_row['SMA60']
+    
+    is_panic = rsi < 25
+    is_oversold = rsi < 35
+    is_buy_zone = curr_price < bb_lower * 1.02
+    macd_turn_up = macd_hist < 0 and macd_hist > prev_macd_hist
+    is_bullish_trend = curr_price > sma20 and sma20 > sma60
+    
+    short_status = "觀望整理"
+    color_code = "#757575" 
+    html_msg = ""
+    comment = ""
+
+    if is_panic:
+        short_status = "極度恐慌"
+        color_code = "#d32f2f" 
+        comment = f"RSI: {rsi:.1f}，市場情緒悲觀，留意超跌反彈機會。"
+        html_msg = f"""<div style='background:#ffebee; padding:10px; border-left:5px solid {color_code}; border-radius:5px;'>
+        <b style='color:{color_code}'>⚠️ 極度恐慌 (RSI < 25)</b><br>{comment}</div>"""
+        
+    elif is_oversold and is_buy_zone and macd_turn_up:
+        short_status = "黃金買訊"
+        color_code = "#2e7d32" 
+        comment = "RSI低檔 + 布林下軌 + MACD轉折，多重訊號支撐。"
+        html_msg = f"""<div style='background:#e8f5e9; padding:10px; border-left:5px solid {color_code}; border-radius:5px;'>
+        <b style='color:{color_code}'>🔥 強力買進訊號</b><br>{comment}</div>"""
+        
+    elif rsi > 75:
+        short_status = "高檔過熱"
+        color_code = "#ef6c00" 
+        comment = f"RSI: {rsi:.1f}，短線過熱，建議減碼或觀望。"
+        html_msg = f"""<div style='background:#fff3e0; padding:10px; border-left:5px solid {color_code}; border-radius:5px;'>
+        <b style='color:{color_code}'>⛔ 高檔過熱 (RSI > 75)</b><br>{comment}</div>"""
+        
+    elif is_bullish_trend and macd_hist > 0:
+        short_status = "多頭續抱"
+        color_code = "#1976d2" 
+        comment = "股價沿月線上漲，動能強勁，宜順勢操作。"
+        html_msg = f"""<div style='background:#e3f2fd; padding:10px; border-left:5px solid {color_code}; border-radius:5px;'>
+        <b style='color:{color_code}'>📈 多頭排列</b><br>{comment}</div>"""
+        
+    else:
+        comment = f"RSI: {rsi:.1f}，無明確方向，等待趨勢確立。"
+        html_msg = f"""<div style='background:#f5f5f5; padding:10px; border-left:5px solid {color_code}; border-radius:5px;'>
+        <b style='color:#616161'>☕ 盤整中</b><br>{comment}</div>"""
+        
+    return short_status, color_code, html_msg, comment
+
 @st.cache_data(ttl=600)
 def fetch_yf_history(symbol):
     time.sleep(random.uniform(0.5, 1.0))
@@ -77,13 +136,17 @@ def fetch_yf_history(symbol):
         df['SMA20'] = df['Close'].rolling(20).mean()
         df['SMA60'] = df['Close'].rolling(60).mean()
         
+        # 布林通道 (策略所需)
+        std20 = df['Close'].rolling(20).std()
+        df['Lower'] = df['SMA20'] - (std20 * 2)
+        
         # RSI
         delta = df['Close'].diff()
         gain = delta.clip(lower=0).rolling(14).mean()
         loss = -delta.clip(upper=0).rolling(14).mean()
         df['RSI'] = 100 - (100 / (1 + (gain/(loss+1e-9))))
         
-        # MACD 計算
+        # MACD
         exp1 = df['Close'].ewm(span=12, adjust=False).mean()
         exp2 = df['Close'].ewm(span=26, adjust=False).mean()
         df['MACD'] = exp1 - exp2
@@ -214,10 +277,16 @@ elif st.session_state.menu == "management":
         sh.update('A1', [portfolio.columns.tolist()] + edited.values.tolist())
         st.cache_data.clear(); st.rerun()
 
-# --- 底部圖表顯示 (新增 MACD) ---
+# --- 底部圖表與策略建議顯示 ---
 if 'current_plot' in st.session_state:
     st.divider()
     p_df, p_name = st.session_state.current_plot
+    
+    # --- 呼叫策略建議函數 ---
+    status, color, html, note = get_strategy_suggestion(p_df)
+    st.markdown(f"### 💡 AI 策略建議：{p_name}")
+    st.markdown(html, unsafe_allow_html=True)
+    st.write("") # 間隔
     
     # 建立三列圖表：K線/均線、RSI、MACD
     fig = make_subplots(
@@ -225,13 +294,14 @@ if 'current_plot' in st.session_state:
         shared_xaxes=True, 
         vertical_spacing=0.05,
         row_heights=[0.5, 0.2, 0.3],
-        subplot_titles=(f"{p_name} 股價 K 線與均線", "RSI 強弱指標", "MACD 指標")
+        subplot_titles=(f"股價 K 線與均線", "RSI 強弱指標", "MACD 指標")
     )
     
-    # 1. K線與均線
+    # 1. K線與均線 (加入布林下軌輔助觀察)
     fig.add_trace(go.Candlestick(x=p_df.index, open=p_df['Open'], high=p_df['High'], low=p_df['Low'], close=p_df['Close'], name='K線'), row=1, col=1)
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['SMA20'], line=dict(color='orange', width=1), name='20MA'), row=1, col=1)
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['SMA60'], line=dict(color='blue', width=1), name='60MA'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=p_df.index, y=p_df['Lower'], line=dict(color='rgba(200,200,200,0.5)', dash='dot'), name='BB下軌'), row=1, col=1)
     
     # 2. RSI
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['RSI'], line=dict(color='purple'), name='RSI(14)'), row=2, col=1)
@@ -241,8 +311,8 @@ if 'current_plot' in st.session_state:
     # 3. MACD
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['MACD'], line=dict(color='blue'), name='DIF'), row=3, col=1)
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['Signal'], line=dict(color='orange'), name='MACD'), row=3, col=1)
-    colors = ['red' if val >= 0 else 'green' for val in p_df['Hist']]
+    colors = ['#eb093b' if val >= 0 else '#00a651' for val in p_df['Hist']]
     fig.add_trace(go.Bar(x=p_df.index, y=p_df['Hist'], marker_color=colors, name='OSC柱狀圖'), row=3, col=1)
 
-    fig.update_layout(height=800, xaxis_rangeslider_visible=False, showlegend=True, template="plotly_white")
+    fig.update_layout(height=850, xaxis_rangeslider_visible=False, showlegend=True, template="plotly_white")
     st.plotly_chart(fig, use_container_width=True)
