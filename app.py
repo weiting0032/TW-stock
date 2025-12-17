@@ -10,7 +10,7 @@ import random
 
 # --- 0. 基礎設定 ---
 PORTFOLIO_SHEET_TITLE = 'Streamlit TW Stock' 
-st.set_page_config(page_title="台股戰情指揮中心 V11.0", layout="wide", page_icon="📈")
+st.set_page_config(page_title="台股戰情指揮中心 V12.0", layout="wide", page_icon="📈")
 
 st.markdown("""
     <style>
@@ -24,6 +24,7 @@ st.markdown("""
     .profit-down { color: #00a651; font-weight: bold; }
     .group-tag { background-color: #f0f2f6; color: #555; padding: 2px 8px; border-radius: 5px; font-size: 0.8em; }
     .function-title { background-color: #1a2a6c; color: white; padding: 10px 20px; border-radius: 5px; margin-bottom: 20px; font-weight: bold; }
+    .strategy-tag { font-size: 0.85em; padding: 2px 8px; border-radius: 4px; color: white; font-weight: bold; margin-top: 5px; display: inline-block; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -65,7 +66,7 @@ MARKET_MAP = get_market_data()
 STOCK_OPTIONS = [f"{k} {v['名稱']} ({v['產業']})" for k, v in MARKET_MAP.items()]
 
 def get_strategy_suggestion(df):
-    if df.empty or len(df) < 26: 
+    if df is None or df.empty or len(df) < 26: 
         return ("資料不足", "#9e9e9e", "<span>資料不足以產生訊號</span>", "")
     last_row = df.iloc[-1]
     prev_row = df.iloc[-2]
@@ -83,45 +84,16 @@ def get_strategy_suggestion(df):
     macd_turn_up = macd_hist < 0 and macd_hist > prev_macd_hist
     is_bullish_trend = curr_price > sma20 and sma20 > sma60
     
-    short_status = "觀望整理"
-    color_code = "#757575" 
-    html_msg = ""
-    comment = ""
-
     if is_panic:
-        short_status = "極度恐慌"
-        color_code = "#d32f2f" 
-        comment = f"RSI: {rsi:.1f}，市場情緒悲觀，留意超跌反彈機會。"
-        html_msg = f"""<div style='background:#ffebee; padding:10px; border-left:5px solid {color_code}; border-radius:5px;'>
-        <b style='color:{color_code}'>⚠️ 極度恐慌 (RSI < 25)</b><br>{comment}</div>"""
-        
+        return ("極度恐慌", "#d32f2f", f"<div style='background:#ffebee; padding:10px; border-left:5px solid #d32f2f; border-radius:5px;'><b style='color:#d32f2f'>⚠️ 極度恐慌 (RSI < 25)</b><br>RSI: {rsi:.1f}，市場情緒悲觀，留意超跌反彈機會。</div>", f"RSI: {rsi:.1f}，市場情緒悲觀。")
     elif is_oversold and is_buy_zone and macd_turn_up:
-        short_status = "黃金買訊"
-        color_code = "#2e7d32" 
-        comment = "RSI低檔 + 布林下軌 + MACD轉折，多重訊號支撐。"
-        html_msg = f"""<div style='background:#e8f5e9; padding:10px; border-left:5px solid {color_code}; border-radius:5px;'>
-        <b style='color:{color_code}'>🔥 強力買進訊號</b><br>{comment}</div>"""
-        
+        return ("黃金買訊", "#2e7d32", f"<div style='background:#e8f5e9; padding:10px; border-left:5px solid #2e7d32; border-radius:5px;'><b style='color:#2e7d32'>🔥 強力買進訊號</b><br>RSI低檔 + 布林下軌 + MACD轉折，多重訊號支撐。</div>", "多重訊號支撐。")
     elif rsi > 75:
-        short_status = "高檔過熱"
-        color_code = "#ef6c00" 
-        comment = f"RSI: {rsi:.1f}，短線過熱，建議減碼或觀望。"
-        html_msg = f"""<div style='background:#fff3e0; padding:10px; border-left:5px solid {color_code}; border-radius:5px;'>
-        <b style='color:{color_code}'>⛔ 高檔過熱 (RSI > 75)</b><br>{comment}</div>"""
-        
+        return ("高檔過熱", "#ef6c00", f"<div style='background:#fff3e0; padding:10px; border-left:5px solid #ef6c00; border-radius:5px;'><b style='color:#ef6c00'>⛔ 高檔過熱 (RSI > 75)</b><br>RSI: {rsi:.1f}，短線過熱，建議減碼或觀望。</div>", f"RSI: {rsi:.1f}，短線過熱。")
     elif is_bullish_trend and macd_hist > 0:
-        short_status = "多頭續抱"
-        color_code = "#1976d2" 
-        comment = "股價沿月線上漲，動能強勁，宜順勢操作。"
-        html_msg = f"""<div style='background:#e3f2fd; padding:10px; border-left:5px solid {color_code}; border-radius:5px;'>
-        <b style='color:{color_code}'>📈 多頭排列</b><br>{comment}</div>"""
-        
+        return ("多頭續抱", "#1976d2", f"<div style='background:#e3f2fd; padding:10px; border-left:5px solid #1976d2; border-radius:5px;'><b style='color:#1976d2'>📈 多頭排列</b><br>股價沿月線上漲，動能強勁，宜順勢操作。</div>", "股價動能強勁。")
     else:
-        comment = f"RSI: {rsi:.1f}，無明確方向，等待趨勢確立。"
-        html_msg = f"""<div style='background:#f5f5f5; padding:10px; border-left:5px solid {color_code}; border-radius:5px;'>
-        <b style='color:#616161'>☕ 盤整中</b><br>{comment}</div>"""
-        
-    return short_status, color_code, html_msg, comment
+        return ("觀望整理", "#757575", f"<div style='background:#f5f5f5; padding:10px; border-left:5px solid #757575; border-radius:5px;'><b style='color:#616161'>☕ 盤整中</b><br>RSI: {rsi:.1f}，無明確方向，等待趨勢確立。</div>", f"RSI: {rsi:.1f}，無明確方向。")
 
 @st.cache_data(ttl=600)
 def fetch_yf_history(symbol):
@@ -132,27 +104,19 @@ def fetch_yf_history(symbol):
         if df.empty:
             df = yf.Ticker(f"{symbol}.TWO").history(period="2y", auto_adjust=False)
         
-        # 移動平均線
         df['SMA20'] = df['Close'].rolling(20).mean()
         df['SMA60'] = df['Close'].rolling(60).mean()
-        
-        # 布林通道 (策略所需)
         std20 = df['Close'].rolling(20).std()
         df['Lower'] = df['SMA20'] - (std20 * 2)
-        
-        # RSI
         delta = df['Close'].diff()
         gain = delta.clip(lower=0).rolling(14).mean()
         loss = -delta.clip(upper=0).rolling(14).mean()
         df['RSI'] = 100 - (100 / (1 + (gain/(loss+1e-9))))
-        
-        # MACD
         exp1 = df['Close'].ewm(span=12, adjust=False).mean()
         exp2 = df['Close'].ewm(span=26, adjust=False).mean()
         df['MACD'] = exp1 - exp2
         df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
         df['Hist'] = df['MACD'] - df['Signal']
-        
         return df
     except: return None
 
@@ -181,7 +145,10 @@ if st.session_state.menu == "portfolio":
                 cv = r['Cost'] * r['Shares']
                 total_mv += mv
                 total_cost += cv
-                details.append({'r': r, 'm': m_data, 'cp': curr_p})
+                # 為了快速預覽策略，這裡靜默抓取數據
+                hist_df = fetch_yf_history(r['Symbol'])
+                strat_name, strat_color, _, _ = get_strategy_suggestion(hist_df)
+                details.append({'r': r, 'm': m_data, 'cp': curr_p, 'strat': (strat_name, strat_color), 'df': hist_df})
 
         diff = total_mv - total_cost
         p_ratio = (diff / total_cost * 100) if total_cost > 0 else 0
@@ -198,7 +165,7 @@ if st.session_state.menu == "portfolio":
 
         cols = st.columns(3)
         for i, item in enumerate(details):
-            r, m, cp = item['r'], item['m'], item['cp']
+            r, m, cp, strat, h_df = item['r'], item['m'], item['cp'], item['strat'], item['df']
             p_pct = (cp - r['Cost']) / r['Cost'] * 100 if r['Cost'] > 0 else 0
             with cols[i % 3]:
                 st.markdown(f"""
@@ -211,12 +178,11 @@ if st.session_state.menu == "portfolio":
                     <div style="font-size:0.85em; color:#666; border-top:1px dashed #eee; padding-top:8px;">
                         PE: {m['PE']} | PB: {m['PB']} | 成本: {r['Cost']}
                     </div>
+                    <div class="strategy-tag" style="background-color:{strat[1]};">策略建議: {strat[0]}</div>
                 </div>
                 """, unsafe_allow_html=True)
                 if st.button(f"查看技術分析 {r['Symbol']}", key=f"btn_{r['Symbol']}"):
-                    with st.spinner('抓取歷史 K 線中...'):
-                        df = fetch_yf_history(r['Symbol'])
-                        if df is not None: st.session_state.current_plot = (df, r['Name'])
+                    if h_df is not None: st.session_state.current_plot = (h_df, r['Name'])
 
 # --- 功能 B: 低基期快篩 ---
 elif st.session_state.menu == "screening":
@@ -243,21 +209,24 @@ elif st.session_state.menu == "screening":
             st.info(f"符合標的共 {len(df_display)} 筆")
             sc_cols = st.columns(3)
             for i, (idx, row) in enumerate(df_display.iterrows()):
+                # 為了快速顯示卡片上的建議，這裡需要抓取技術數據
                 with sc_cols[i % 3]:
+                    # 抓取技術面來判定策略標籤
+                    h_df = fetch_yf_history(row['代碼'])
+                    strat_name, strat_color, _, _ = get_strategy_suggestion(h_df)
                     st.markdown(f"""
                     <div class="stock-card">
                         <div style="display:flex; justify-content:space-between;"><b>{row['代碼']} {row['名稱']}</b><span class="group-tag">{row['產業']}</span></div>
                         <hr style="margin:8px 0; border:0; border-top:1px solid #eee;">
                         <div style="font-size:1.1em; margin-bottom:5px;">現價: <b>${row['現價']}</b></div>
                         <div style="font-size:0.85em; color:#666;">PE: {row['PE']} | PB: {row['PB']}</div>
+                        <div class="strategy-tag" style="background-color:{strat_color};">策略建議: {strat_name}</div>
                     </div>
                     """, unsafe_allow_html=True)
                     if st.button(f"技術診斷 {row['代碼']}", key=f"sc_{row['代碼']}"):
-                        with st.spinner('圖表生成中...'):
-                            df_hist = fetch_yf_history(row['代碼'])
-                            if df_hist is not None: st.session_state.current_plot = (df_hist, row['名稱'])
+                        if h_df is not None: st.session_state.current_plot = (h_df, row['名稱'])
 
-# --- 功能 C: 免庫存診斷 ---
+# --- 其餘功能 C, D 維持不變 ---
 elif st.session_state.menu == "diagnosis":
     st.markdown('<div class="function-title">功能：🔍 全市場技術分析診斷</div>', unsafe_allow_html=True)
     selection = st.selectbox("搜尋標的", options=["請選擇..."] + STOCK_OPTIONS)
@@ -266,7 +235,6 @@ elif st.session_state.menu == "diagnosis":
         df = fetch_yf_history(code)
         if df is not None: st.session_state.current_plot = (df, name)
 
-# --- 功能 D: 庫存管理 ---
 elif st.session_state.menu == "management":
     st.markdown('<div class="function-title">功能：📝 庫存清單管理系統</div>', unsafe_allow_html=True)
     edited = st.data_editor(portfolio, hide_index=True, use_container_width=True)
@@ -277,42 +245,26 @@ elif st.session_state.menu == "management":
         sh.update('A1', [portfolio.columns.tolist()] + edited.values.tolist())
         st.cache_data.clear(); st.rerun()
 
-# --- 底部圖表與策略建議顯示 ---
+# --- 底部圖表 ---
 if 'current_plot' in st.session_state:
     st.divider()
     p_df, p_name = st.session_state.current_plot
-    
-    # --- 呼叫策略建議函數 ---
     status, color, html, note = get_strategy_suggestion(p_df)
-    st.markdown(f"### 💡 AI 策略建議：{p_name}")
+    st.markdown(f"### 💡 AI 策略詳細分析：{p_name}")
     st.markdown(html, unsafe_allow_html=True)
-    st.write("") # 間隔
     
-    # 建立三列圖表：K線/均線、RSI、MACD
-    fig = make_subplots(
-        rows=3, cols=1, 
-        shared_xaxes=True, 
-        vertical_spacing=0.05,
-        row_heights=[0.5, 0.2, 0.3],
-        subplot_titles=(f"股價 K 線與均線", "RSI 強弱指標", "MACD 指標")
-    )
-    
-    # 1. K線與均線 (加入布林下軌輔助觀察)
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.5, 0.2, 0.3],
+                        subplot_titles=("股價 K 線與均線", "RSI 強弱指標", "MACD 指標"))
     fig.add_trace(go.Candlestick(x=p_df.index, open=p_df['Open'], high=p_df['High'], low=p_df['Low'], close=p_df['Close'], name='K線'), row=1, col=1)
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['SMA20'], line=dict(color='orange', width=1), name='20MA'), row=1, col=1)
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['SMA60'], line=dict(color='blue', width=1), name='60MA'), row=1, col=1)
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['Lower'], line=dict(color='rgba(200,200,200,0.5)', dash='dot'), name='BB下軌'), row=1, col=1)
-    
-    # 2. RSI
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['RSI'], line=dict(color='purple'), name='RSI(14)'), row=2, col=1)
     fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
     fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
-    
-    # 3. MACD
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['MACD'], line=dict(color='blue'), name='DIF'), row=3, col=1)
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['Signal'], line=dict(color='orange'), name='MACD'), row=3, col=1)
-    colors = ['#eb093b' if val >= 0 else '#00a651' for val in p_df['Hist']]
-    fig.add_trace(go.Bar(x=p_df.index, y=p_df['Hist'], marker_color=colors, name='OSC柱狀圖'), row=3, col=1)
-
-    fig.update_layout(height=850, xaxis_rangeslider_visible=False, showlegend=True, template="plotly_white")
+    bar_colors = ['#eb093b' if val >= 0 else '#00a651' for val in p_df['Hist']]
+    fig.add_trace(go.Bar(x=p_df.index, y=p_df['Hist'], marker_color=bar_colors, name='OSC柱狀圖'), row=3, col=1)
+    fig.update_layout(height=850, xaxis_rangeslider_visible=False, template="plotly_white")
     st.plotly_chart(fig, use_container_width=True)
