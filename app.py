@@ -152,30 +152,64 @@ if st.session_state.menu == "portfolio":
 
 # --- 功能 B: 低基期快篩 (維持 V6.7) ---
 elif st.session_state.menu == "screening":
-    st.subheader("💰 低基期潛力標的快篩 (V6.7)")
+    st.subheader("💰 低基期潛力標的快篩 (依族群/PE/PB排序)")
     c1, c2, c3 = st.columns([2, 2, 1])
     pe_lim = c1.number_input("PE 本益比上限", value=15.0)
     pb_lim = c2.number_input("PB 淨值比上限", value=1.2)
     
     if c3.button("啟動掃描"):
-        st.session_state.scan_results = [k for k, v in MARKET_MAP.items() if 0 < v['PE'] <= pe_lim and 0 < v['PB'] <= pb_lim]
-    
-    if 'scan_results' in st.session_state:
-        st.info(f"符合標的共 {len(st.session_state.scan_results)} 筆")
-        sc_cols = st.columns(3)
-        for i, code in enumerate(st.session_state.scan_results):
-            with sc_cols[i % 3]:
-                s_info = MARKET_MAP[code]
-                st.markdown(f"""
-                <div class="stock-card">
-                    <b>{code} {s_info['名稱']}</b> <span class="group-tag">{s_info['產業']}</span><br>
-                    <hr style="margin:8px 0; border:0; border-top:1px solid #eee;">
-                    現價: ${s_info['現價']} | PE: {s_info['PE']} | PB: {s_info['PB']}
-                </div>
-                """, unsafe_allow_html=True)
-                if st.button(f"技術診斷 {code}", key=f"sc_{code}"):
-                    df = fetch_yf_history(code)
-                    if df is not None: st.session_state.current_plot = (df, s_info['名稱'])
+        # 1. 執行篩選並建立 DataFrame
+        results = []
+        for k, v in MARKET_MAP.items():
+            if 0 < v['PE'] <= pe_lim and 0 < v['PB'] <= pb_lim:
+                results.append({
+                    '代碼': k,
+                    '名稱': v['名稱'],
+                    '產業': v['產業'],
+                    '現價': v['現價'],
+                    'PE': v['PE'],
+                    'PB': v['PB']
+                })
+        
+        df_res = pd.DataFrame(results)
+        
+        if not df_res.empty:
+            # 2. 多層次排序：產業(族群) -> PE(低到高) -> PB(低到高)
+            df_res = df_res.sort_values(by=['產業', 'PE', 'PB'], ascending=[True, True, True])
+            st.session_state.scan_results_df = df_res
+        else:
+            st.session_state.scan_results_df = pd.DataFrame()
+
+    if 'scan_results_df' in st.session_state:
+        df_display = st.session_state.scan_results_df
+        if not df_display.empty:
+            st.info(f"符合標的共 {len(df_display)} 筆（排序順序：產業 > 本益比 > 淨值比）")
+            
+            sc_cols = st.columns(3)
+            # 使用 iterrows 遍歷排序後的資料
+            for i, (idx, row) in enumerate(df_display.iterrows()):
+                with sc_cols[i % 3]:
+                    st.markdown(f"""
+                    <div class="stock-card">
+                        <div style="display:flex; justify-content:space-between;">
+                            <b>{row['代碼']} {row['名稱']}</b> 
+                            <span class="group-tag">{row['產業']}</span>
+                        </div>
+                        <hr style="margin:8px 0; border:0; border-top:1px solid #eee;">
+                        <div style="font-size:1.1em; margin-bottom:5px;">現價: <b>${row['現價']}</b></div>
+                        <div style="font-size:0.85em; color:#666;">
+                            PE: <span style="color:{'#eb093b' if row['PE'] < 10 else '#444'}">{row['PE']}</span> | 
+                            PB: <span style="color:{'#eb093b' if row['PB'] < 1 else '#444'}">{row['PB']}</span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if st.button(f"技術診斷 {row['代碼']}", key=f"sc_{row['代碼']}"):
+                        with st.spinner('圖表生成中...'):
+                            df_hist = fetch_yf_history(row['代碼'])
+                            if df_hist is not None: 
+                                st.session_state.current_plot = (df_hist, row['名稱'])
+        else:
+            st.warning("查無符合條件之標的，請放寬篩選標準。")
 
 # --- 功能 C: 免庫存診斷 ---
 elif st.session_state.menu == "diagnosis":
@@ -207,3 +241,4 @@ if 'current_plot' in st.session_state:
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['RSI'], line=dict(color='purple'), name='RSI'), row=2, col=1)
     fig.update_layout(height=600, xaxis_rangeslider_visible=False, title=f"{p_name} 分析報告")
     st.plotly_chart(fig, use_container_width=True)
+
