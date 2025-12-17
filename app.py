@@ -143,18 +143,36 @@ main_col, side_col = st.columns([0.6, 0.4])
 with main_col:
     st.subheader("🚀 庫存個股監控")
     if monitored_data:
-        m_cols = st.columns(2)
+        m_cols = st.columns(2)  # 保持雙欄位配置，視圖較清晰
         for i, item in enumerate(monitored_data):
             with m_cols[i % 2]:
+                # 取得該標的的策略建議與顏色
                 adv, col, sc = get_v6_strategy(item['df'])
+                
+                # 從 STOCK_MAP 提取 PE/PB，若無數據則顯示 "-"
+                stock_info = STOCK_MAP.get(item['r']['Symbol'], {'PE': '-', 'PB': '-'})
+                curr_pe = stock_info.get('PE', '-')
+                curr_pb = stock_info.get('PB', '-')
+                
+                # 建立資訊卡片
                 st.markdown(f"""
-                <div class="stock-card" style="border-left: 8px solid {col}">
-                    <h4 style="margin:0">{item['r']['Name']} ({item['r']['Symbol']})</h4>
-                    <h2 style="margin:5px 0; color:#333">${item['cp']:.2f}</h2>
-                    <p style="color:{col}; font-weight:bold; margin:0">{adv} | 評分: {sc}</p>
+                <div class="stock-card" style="border-left: 8px solid {col}; border-top: 1px solid #eee;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="font-weight: bold; font-size: 1.1em;">{item['r']['Name']} ({item['r']['Symbol']})</span>
+                        <span style="color: #666; font-size: 0.85em;">{item['r'].get('Note', '')}</span>
+                    </div>
+                    <div style="margin: 10px 0;">
+                        <span style="font-size: 2em; font-weight: bold; color: #222;">${item['cp']:.2f}</span>
+                        <span style="margin-left: 10px; color: {col}; font-weight: bold;">{adv} (評分: {sc})</span>
+                    </div>
+                    <div style="display: flex; gap: 15px; border-top: 1px solid #f0f0f0; padding-top: 8px; color: #555; font-size: 0.9em;">
+                        <div>本益比 (PE): <b>{curr_pe}</b></div>
+                        <div>淨值比 (PB): <b>{curr_pb}</b></div>
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
-                if st.button(f"分析圖表", key=f"btn_{item['r']['Symbol']}"):
+                
+                if st.button(f"查看 {item['r']['Symbol']} 分析圖表", key=f"mon_{item['r']['Symbol']}"):
                     st.session_state.current_plot = (item['df'], item['r']['Name'])
 
 with side_col:
@@ -203,3 +221,4 @@ if 'current_plot' in st.session_state:
     st.divider()
     plot_df, plot_name = st.session_state.current_plot
     st.plotly_chart(plot_v6_chart(plot_df, plot_name), use_container_width=True)
+
