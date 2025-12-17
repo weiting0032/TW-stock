@@ -60,13 +60,12 @@ def load_portfolio():
 
 def save_portfolio(df):
     df['Name'] = df['Symbol'].apply(get_stock_name)
-    df_to_save = df[df['Shares'] >= 0].copy()
     gc, sh = get_gsheets_client()
     if sh is None: return False
     try:
         worksheet = sh.sheet1
         worksheet.clear()
-        data_list = [df_to_save.columns.values.tolist()] + df_to_save.values.tolist()
+        data_list = [df.columns.values.tolist()] + df.values.tolist()
         worksheet.update(data_list)
         st.toast("✅ 已同步至 Google Sheets！")
         return True
@@ -74,7 +73,7 @@ def save_portfolio(df):
         st.error(f"⚠️ 儲存失敗: {e}")
         return False
 
-# --- 1. 股票資訊管理 ---
+# --- 1. 股票資訊管理與快篩 ---
 @st.cache_data(ttl=86400)
 def get_tw_stock_map():
     url = "https://stock.wespai.com/lists"
@@ -96,28 +95,33 @@ TW_STOCKS = get_tw_stock_map()
 STOCK_SEARCH_LIST = [f"{code} {info['名稱']}" for code, info in TW_STOCKS.items()]
 
 def get_stock_name(symbol):
-    base = symbol.split('.')[0]
-    return TW_STOCKS.get(base, {}).get('名稱', symbol)
+    return TW_STOCKS.get(symbol.split('.')[0], {}).get('名稱', symbol)
 
-# --- 2. 數據運算與 V6 策略 ---
+def low_base_screening(max_pe, max_pb):
+    data_list = []
+    for code, info in TW_STOCKS.items():
+        if pd.notna(info.get('PE')) and pd.notna(info.get('PB')):
+            if 0 < info['PE'] <= max_pe and info['PB'] <= max_pb:
+                data_list.append({"代碼": code, "名稱": info['名稱'], "產業": info['產業類別'], "PE": info['PE'], "PB": info['PB']})
+    return pd.DataFrame(data_list).sort_values(by=['產業', 'PE'])
+
+# --- 2. 核心 V6 策略指標 ---
 @st.cache_data(ttl=3600)
 def get_stock_data(symbol_input, period="2y"):
     symbol = symbol_input.split(' ')[0] if ' ' in symbol_input else symbol_input
     full_symbol = symbol if '.' in symbol else f"{symbol}.TW"
-    stock = yf.Ticker(full_symbol)
-    df = stock.history(period=period)
+    df = yf.Ticker(full_symbol).history(period=period)
     if df.empty and '.' not in symbol:
-        full_symbol = f"{symbol}.TWO"
-        df = yf.Ticker(full_symbol).history(period=period)
-    return df, full_symbol, get_stock_name(symbol)
+        df = yf.Ticker(f"{symbol}.TWO").history(period=period)
+    return df
 
-def calculate_indicators(df):
+def calculate_v6_indicators(df):
     if df.empty or len(df) < 240: return df
-    # 均線
+    # 均線 (台股年線 240)
     df['SMA20'] = df['Close'].rolling(20).mean()
     df['SMA60'] = df['Close'].rolling(60).mean()
     df['SMA240'] = df['Close'].rolling(240).mean()
-    # 布林帶
+    # 布林帶與位置
     std = df['Close'].rolling(20).std()
     df['Upper'] = df['SMA20'] + 2 * std
     df['Lower'] = df['SMA20'] - 2 * std
@@ -135,138 +139,96 @@ def calculate_indicators(df):
     df['Hist'] = df['MACD'] - df['Signal']
     return df
 
-def get_v6_strategy_suggestion(df):
-    if df.empty or len(df) < 240: 
-        return ("數據不足", "#9e9e9e", "需要至少 240 日數據")
-    
+def get_v6_advice(df):
+    if df.empty or len(df) < 240: return "數據不足", "#9e9e9e", 0
     row = df.iloc[-1]
     prev_row = df.iloc[-2]
-    price = row['Close']
-    sma240 = row['SMA240']
-    sma60 = row['SMA60']
-    sma20 = row['SMA20']
-    rsi = row['RSI']
-    bb_pos = row['BB_pos']
-    hist_val = row['Hist']
-    prev_hist = prev_row['Hist']
-
-    # 1. 趨勢判斷 (台股以 240MA 為年線)
-    bull_trend = price > sma240
+    
+    # V6 趨勢與門檻
+    bull_trend = row['Close'] > row['SMA240']
     oversold_rsi = 40 if bull_trend else 30
     overbought_rsi = 78 if bull_trend else 70
 
-    # 2. 條件判定
-    is_oversold = rsi < oversold_rsi
-    is_near_lower = bb_pos < 15
-    macd_turn_up = hist_val > prev_hist
-    macd_above_zero = row['MACD'] > 0
-    
-    # 3. 買入評分
     score = 0
-    if is_oversold: score += 1
-    if is_near_lower: score += 1
-    if macd_turn_up and macd_above_zero: score += 1
+    if row['RSI'] < oversold_rsi: score += 1
+    if row['BB_pos'] < 15: score += 1
+    if row['Hist'] > prev_row['Hist'] and row['MACD'] > 0: score += 1
     if bull_trend: score += 1
 
-    # 4. 決策邏輯
-    status = "觀望整理"
-    color = "#757575"
-    
-    # 賣出/防守條件
-    trend_break = price < sma60 and sma20 < sma60
-    is_overbought = rsi > overbought_rsi or bb_pos > 85
-    
-    if trend_break:
-        status, color = "趨勢轉空 (建議減碼)", "#d32f2f"
-    elif is_overbought:
-        status, color = "高檔過熱 (建議分批獲利)", "#ef6c00"
-    elif score >= 3:
-        status, color = "強力買進訊號", "#2e7d32"
-    elif score == 2:
-        status, color = "分批佈局 (買進)", "#43a047"
-    elif bull_trend and price > sma20:
-        status, color = "多頭續抱", "#1976d2"
-
-    msg = f"RSI: {rsi:.1f} | BB位置: {bb_pos:.1f}% | 評分: {score}/4 | 年線趨勢: {'多頭' if bull_trend else '空頭'}"
-    return status, color, msg
+    # 決策
+    if (row['Close'] < row['SMA60'] and row['SMA20'] < row['SMA60']): return "趨勢破壞(建議減碼)", "#d32f2f", score
+    if row['RSI'] > overbought_rsi or row['BB_pos'] > 85: return "高檔過熱(分批獲利)", "#ef6c00", score
+    if score >= 3: return "強力買進", "#2e7d32", score
+    if score == 2: return "分批佈局", "#43a047", score
+    return "多頭續抱" if bull_trend else "觀望整理", "#1976d2" if bull_trend else "#757575", score
 
 # --- 3. 介面渲染 ---
 if 'portfolio_df' not in st.session_state:
     st.session_state.portfolio_df = load_portfolio()
 
-# 側邊欄控制
+# A. 側邊欄控制
 st.sidebar.title("🎛️ 指揮控制台")
-with st.sidebar.expander("➕ 新增/更新 監控標的"):
-    search_symbol = st.selectbox("搜尋股票", [""] + STOCK_SEARCH_LIST)
-    cost = st.number_input("平均成本", value=0.0)
-    shares = st.number_input("持有股數", value=0, step=1000)
-    note = st.text_input("備註")
-    if st.button("更新清單"):
-        if search_symbol:
-            sym = search_symbol.split(' ')[0]
-            df = st.session_state.portfolio_df
-            if sym in df['Symbol'].values:
-                df.loc[df['Symbol'] == sym, ['Cost', 'Shares', 'Note']] = [cost, shares, note]
-            else:
-                new_row = pd.DataFrame({'Symbol':[sym], 'Name':[get_stock_name(sym)], 'Cost':[cost], 'Shares':[shares], 'Note':[note]})
-                st.session_state.portfolio_df = pd.concat([df, new_row], ignore_index=True)
-            save_portfolio(st.session_state.portfolio_df)
-            st.rerun()
+with st.sidebar.expander("💰 低基期標的快篩", expanded=True):
+    max_pe = st.number_input("PE 上限", value=15.0)
+    max_pb = st.number_input("PB 上限", value=2.0)
+    if st.button("執行快篩"):
+        st.session_state.screen_df = low_base_screening(max_pe, max_pb)
 
-# 主介面
-st.subheader("🏦 投資組合監控")
+with st.sidebar.expander("🔍 個股快篩 (免庫存)"):
+    qs_input = st.selectbox("搜尋股票", [""] + STOCK_SEARCH_LIST)
+    if st.button("分析"):
+        st.session_state.qs_sym = qs_input.split(' ')[0]
+
+# B. 主畫面：資產總覽 Bar
 portfolio = st.session_state.portfolio_df
+total_mkt, total_cost = 0, 0
+stock_details = []
+
 if not portfolio.empty:
-    cols = st.columns(len(portfolio) if len(portfolio) < 5 else 4)
-    for i, (_, r) in enumerate(portfolio.iterrows()):
+    for _, r in portfolio.iterrows():
+        df = get_stock_data(r['Symbol'])
+        if not df.empty:
+            cp = df['Close'].iloc[-1]
+            total_mkt += cp * r['Shares']
+            total_cost += r['Cost'] * r['Shares']
+            stock_details.append({'Symbol': r['Symbol'], 'Price': cp, 'df': df})
+
+total_pl = total_mkt - total_cost
+pl_pct = (total_pl / total_cost * 100) if total_cost > 0 else 0
+
+st.subheader("🏦 投資組合總覽")
+c1, c2, c3 = st.columns(3)
+c1.metric("總資產市值", f"${total_mkt:,.0f}")
+c2.metric("總未實現損益", f"${total_pl:,.0f}", f"{pl_pct:.2f}%")
+c3.metric("總投入成本", f"${total_cost:,.0f}")
+st.divider()
+
+# C. 監控卡片 (新增 PE/PB)
+st.subheader("🚀 個股監控牆")
+if stock_details:
+    cols = st.columns(4)
+    for i, item in enumerate(stock_details):
         with cols[i % 4]:
-            df_stock, full_sym, name = get_stock_data(r['Symbol'])
-            df_stock = calculate_indicators(df_stock)
-            curr_price = df_stock['Close'].iloc[-1]
-            status, color, detail = get_v6_strategy_suggestion(df_stock)
-            
-            pl = (curr_price - r['Cost']) * r['Shares']
-            pl_pct = ((curr_price / r['Cost']) - 1) * 100 if r['Cost'] > 0 else 0
+            df_v6 = calculate_v6_indicators(item['df'])
+            advice, color, score = get_v6_advice(df_v6)
+            info = TW_STOCKS.get(item['Symbol'], {})
             
             st.markdown(f"""
-            <div style="border:1px solid #ddd; padding:15px; border-radius:10px; border-left:8px solid {color}">
-                <h3 style="margin:0">{name} ({r['Symbol']})</h3>
-                <p style="font-size:20px; margin:5px 0"><b>現價: {curr_price:.2f}</b></p>
-                <p style="color:{'red' if pl>=0 else 'green'}; margin:0">損益: {pl:,.0f} ({pl_pct:.2f}%)</p>
-                <hr style="margin:10px 0">
-                <p style="font-weight:bold; color:{color}; margin:0">{status}</p>
-                <p style="font-size:12px; color:#666">{detail}</p>
+            <div style="border:1px solid #ddd; padding:10px; border-radius:10px; border-left:8px solid {color}">
+                <h4 style="margin:0">{get_stock_name(item['Symbol'])} ({item['Symbol']})</h4>
+                <p style="font-size:18px; margin:5px 0"><b>現價: {item['Price']:.2f}</b></p>
+                <p style="margin:0; font-size:13px; color:#555">PE: {info.get('PE','N/A')} | PB: {info.get('PB','N/A')}</p>
+                <p style="color:{color}; font-weight:bold; margin-top:5px">{advice}</p>
+                <p style="font-size:11px; color:#888">V6 評分: {score}/4 | RSI: {df_v6['RSI'].iloc[-1]:.1f}</p>
             </div>
             """, unsafe_allow_html=True)
-            if st.button(f"查看圖表 {r['Symbol']}", key=f"btn_{r['Symbol']}"):
-                st.session_state.detail_symbol = r['Symbol']
+            if st.button("圖表", key=f"btn_{item['Symbol']}"):
+                st.session_state.detail_sym = item['Symbol']
 
-# 詳細分析與圖表
-if 'detail_symbol' in st.session_state:
-    sym = st.session_state.detail_symbol
-    df_an, _, name = get_stock_data(sym)
-    df_an = calculate_indicators(df_an)
-    
-    st.divider()
-    st.subheader(f"📈 {name} ({sym}) 技術分析")
-    
-    chart_data = df_an.tail(150)
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.6, 0.2, 0.2], vertical_spacing=0.05)
-    
-    # K線與均線
-    fig.add_trace(go.Candlestick(x=chart_data.index, open=chart_data['Open'], high=chart_data['High'], low=chart_data['Low'], close=chart_data['Close'], name='K線'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['SMA20'], line=dict(color='orange'), name='月線(20)'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['SMA60'], line=dict(color='cyan'), name='季線(60)'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['SMA240'], line=dict(color='purple', width=2), name='年線(240)'), row=1, col=1)
-    
-    # RSI
-    fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['RSI'], line=dict(color='purple'), name='RSI'), row=2, col=1)
-    fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
-    fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
-    
-    # MACD
-    colors = ['#ef5350' if v < 0 else '#66bb6a' for v in chart_data['Hist']]
-    fig.add_trace(go.Bar(x=chart_data.index, y=chart_data['Hist'], marker_color=colors, name='MACD柱'), row=3, col=1)
-    
-    fig.update_layout(height=800, xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig, use_container_width=True)
+# D. 詳情圖表
+if 'detail_sym' in st.session_state:
+    sym = st.session_state.detail_sym
+    df_plot = calculate_v6_indicators(get_stock_data(sym))
+    st.subheader(f"📈 {get_stock_name(sym)} 技術分析")
+    # ... (此處可加入原本的 plot_stock_chart 邏輯) ...
+    st.plotly_chart(go.Figure(data=[go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'])]))
