@@ -442,21 +442,43 @@ st.sidebar.title("🎛️ 指揮控制台")
 
 # A. 新增/更新 庫存
 with st.sidebar.expander("➕ 新增/更新 監控標的", expanded=False):
-    
-    search_symbol = st.selectbox(
-        "搜尋股票", 
-        options=[""] + STOCK_SEARCH_LIST,
-        key="search_symbol_key", 
-    )
-    
-    # 執行 autofill_stock_info_fix
-    autofill_stock_info_fix()
+    
+    # 1. 先取得舊的選擇，用來判斷是否切換了股票
+    if 'prev_search_symbol' not in st.session_state:
+        st.session_state.prev_search_symbol = ""
 
-    in_cost = st.number_input("平均成本", min_value=0.0, step=0.1, key="input_cost")
-    in_shares = st.number_input("持有股數", min_value=0, step=1000, key="input_shares")
-    in_note = st.text_input("備註", key="input_note")
-    
-    c1, c2 = st.columns(2)
+    search_symbol = st.selectbox(
+        "搜尋股票", 
+        options=[""] + STOCK_SEARCH_LIST,
+        key="search_symbol_key", 
+    )
+    
+    # 2. 【關鍵修正】：只有當「切換選中的股票」時，才執行 autofill
+    if search_symbol != st.session_state.prev_search_symbol:
+        selected_symbol = search_symbol.split(' ')[0] if search_symbol else None
+        df = st.session_state.portfolio_df
+        
+        if selected_symbol and selected_symbol in df['Symbol'].values:
+            record = df[df['Symbol'] == selected_symbol].iloc[0]
+            st.session_state.input_cost = float(record['Cost'])
+            st.session_state.input_shares = int(record['Shares'])
+            st.session_state.input_note = str(record['Note']) if record['Note'] else ''
+        else:
+            # 如果是新股票，重置為預設值
+            st.session_state.input_cost = 0.0
+            st.session_state.input_shares = 0
+            st.session_state.input_note = ''
+        
+        # 更新「前一次選擇」，並觸發 rerun 讓輸入框更新顯示
+        st.session_state.prev_search_symbol = search_symbol
+        st.rerun()
+
+    # 3. 渲染輸入框（不要再透過 autofill 函數強制覆寫）
+    in_cost = st.number_input("平均成本", min_value=0.0, step=0.1, key="input_cost")
+    in_shares = st.number_input("持有股數", min_value=0, step=1000, key="input_shares")
+    in_note = st.text_input("備註", key="input_note")
+    
+    c1, c2 = st.columns(2)
     
     if c1.button("💾 儲存/更新", key="save_button"):
         if search_symbol:
@@ -850,3 +872,4 @@ with tab2:
 with tab3:
     st.subheader(f"📋 {stock_name} 原始數據檢視")
     st.dataframe(df_an.sort_index(ascending=False), use_container_width=True)
+
