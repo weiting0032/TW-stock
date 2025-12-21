@@ -1,16 +1,16 @@
 import streamlit as st
 import gspread
-import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
 import time
 import random
+from datetime import datetime, timedelta
 
 # --- 0. 基礎設定 ---
 PORTFOLIO_SHEET_TITLE = 'Streamlit TW Stock' 
-st.set_page_config(page_title="台股戰情指揮中心 V13.1", layout="wide", page_icon="📈")
+st.set_page_config(page_title="台股戰情指揮中心 V13.1 (FinMind版)", layout="wide", page_icon="📈")
 
 st.markdown("""
     <style>
@@ -98,29 +98,65 @@ def get_strategy_suggestion(df):
         return ("觀望整理", "#757575", f"<div style='background:#f5f5f5; padding:10px; border-left:5px solid #757575; border-radius:5px;'><b style='color:#616161'>☕ 盤整中</b><br>等待趨勢確立。</div>", f"RSI: {rsi:.1f}")
 
 @st.cache_data(ttl=600)
-def fetch_yf_history(symbol):
-    time.sleep(random.uniform(0.5, 1.0))
+def fetch_finmind_history(symbol):
+    """
+    取代 yfinance 爬取 FinMind 的數據，並維持原始技術指標邏輯
+    """
+    time.sleep(random.uniform(0.1, 0.3)) # FinMind 速度較快，縮短間隔
     try:
-        ticker = yf.Ticker(f"{symbol}.TW")
-        df = ticker.history(period="2y", auto_adjust=False)
-        if df.empty:
-            df = yf.Ticker(f"{symbol}.TWO").history(period="2y", auto_adjust=False)
+        # 設定抓取 2 年數據
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
         
+        # 使用 FinMind 開放 API
+        url = "https://api.finmindtrade.com/api/v4/data"
+        params = {
+            "dataset": "TaiwanStockPrice",
+            "data_id": symbol,
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+        
+        res = requests.get(url, params=params)
+        data = res.json()
+        
+        if data['msg'] != 'success' or not data['data']:
+            return None
+        
+        df = pd.DataFrame(data['data'])
+        # 統一欄位名稱與 yfinance 格式一致以維持後續邏輯
+        df = df.rename(columns={
+            'date': 'Date',
+            'open': 'Open',
+            'max': 'High',
+            'min': 'Low',
+            'close': 'Close',
+            'trading_volume': 'Volume'
+        })
+        df['Date'] = pd.to_datetime(df['Date'])
+        df.set_index('Date', inplace=True)
+        
+        # --- 維持原代碼指標運算邏輯 ---
         df['SMA20'] = df['Close'].rolling(20).mean()
         df['SMA60'] = df['Close'].rolling(60).mean()
         std20 = df['Close'].rolling(20).std()
         df['Lower'] = df['SMA20'] - (std20 * 2)
+        
         delta = df['Close'].diff()
         gain = delta.clip(lower=0).rolling(14).mean()
         loss = -delta.clip(upper=0).rolling(14).mean()
         df['RSI'] = 100 - (100 / (1 + (gain/(loss+1e-9))))
+        
         exp1 = df['Close'].ewm(span=12, adjust=False).mean()
         exp2 = df['Close'].ewm(span=26, adjust=False).mean()
         df['MACD'] = exp1 - exp2
         df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
         df['Hist'] = df['MACD'] - df['Signal']
+        
         return df
-    except: return None
+    except Exception as e:
+        # st.error(f"獲取 {symbol} 失敗: {e}")
+        return None
 
 # --- 2. 側邊導覽 ---
 with st.sidebar:
@@ -151,7 +187,8 @@ if st.session_state.menu == "portfolio":
                 cv = r['Cost'] * r['Shares']
                 total_mv += mv
                 total_cost += cv
-                hist_df = fetch_yf_history(r['Symbol'])
+                # 改用 FinMind
+                hist_df = fetch_finmind_history(r['Symbol'])
                 strat_name, strat_color, _, _ = get_strategy_suggestion(hist_df)
                 details.append({'r': r, 'm': m_data, 'cp': curr_p, 'strat': (strat_name, strat_color), 'df': hist_df})
 
@@ -214,7 +251,8 @@ elif st.session_state.menu == "screening":
             sc_cols = st.columns(3)
             for i, (idx, row) in enumerate(df_display.iterrows()):
                 with sc_cols[i % 3]:
-                    h_df = fetch_yf_history(row['代碼'])
+                    # 改用 FinMind
+                    h_df = fetch_finmind_history(row['代碼'])
                     strat_name, strat_color, _, _ = get_strategy_suggestion(h_df)
                     st.markdown(f"""
                     <div class="stock-card">
@@ -233,13 +271,13 @@ elif st.session_state.menu == "diagnosis":
     selection = st.selectbox("搜尋標的", options=["請選擇..."] + STOCK_OPTIONS)
     if st.button("執行診斷") and selection != "請選擇...":
         code, name = selection.split(" ")[0], selection.split(" ")[1]
-        df = fetch_yf_history(code)
+        # 改用 FinMind
+        df = fetch_finmind_history(code)
         if df is not None: st.session_state.current_plot = (df, name)
 
 elif st.session_state.menu == "management":
     st.markdown('<div class="function-title">功能：📝 庫存清單管理系統</div>', unsafe_allow_html=True)
     
-    # 1. 新增標的區塊
     with st.expander("➕ 新增標的至庫存", expanded=True):
         c1, c2, c3 = st.columns(3)
         new_sel = c1.selectbox("搜尋標的", options=["請選擇..."] + STOCK_OPTIONS)
@@ -250,28 +288,22 @@ elif st.session_state.menu == "management":
             if new_sel != "請選擇...":
                 n_code, n_name = new_sel.split(" ")[0], new_sel.split(" ")[1]
                 new_data = {'Symbol': n_code, 'Name': n_name, 'Cost': new_cost, 'Shares': new_shares, 'Note': ''}
-                # 更新 session_state 中的 df
                 st.session_state.df_portfolio = pd.concat([st.session_state.df_portfolio, pd.DataFrame([new_data])], ignore_index=True)
                 st.success(f"✅ 已新增 {n_name}。注意：請務必點擊下方「儲存所有變更」才會寫入 Excel！")
             else:
                 st.warning("請先選擇標的。")
 
-    # 2. 顯示與編輯
     st.write("### 庫存列表編輯")
-    # 使用 session_state 作為數據源
     edited_df = st.data_editor(st.session_state.df_portfolio, hide_index=True, use_container_width=True, key="portfolio_editor")
     
     if st.button("💾 儲存所有變更"):
-        # 股數為 0 自動刪除邏輯
         final_df = edited_df[edited_df['Shares'] > 0].copy()
         with st.spinner('正在同步至 Google Sheets...'):
             try:
                 gc = get_gsheet_client()
                 sh = gc.open(PORTFOLIO_SHEET_TITLE).sheet1
                 sh.clear()
-                # 寫入包含標頭的完整資料
                 sh.update('A1', [final_df.columns.tolist()] + final_df.values.tolist())
-                # 重新載入並清除緩存
                 st.session_state.df_portfolio = final_df
                 st.cache_data.clear()
                 st.success("🎉 資料已成功寫入 Excel！")
