@@ -688,6 +688,10 @@ if "scan_results" not in st.session_state:
     st.session_state.scan_results = None
 if "diag_plot" not in st.session_state:
     st.session_state.diag_plot = None
+if "tab1_chart_sym" not in st.session_state:
+    st.session_state.tab1_chart_sym = ""
+if "tab1_chart_data" not in st.session_state:
+    st.session_state.tab1_chart_data = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -839,11 +843,48 @@ with tab1:
 </div>
 """, unsafe_allow_html=True)
 
-            # Chart toggle
+            # Chart toggle — render inline in Tab1 (no rerun needed)
             if item["df"] is not None:
                 if st.button(f"📊 技術圖表 {r['Symbol']}", key=f"chart_{r['Symbol']}", use_container_width=True):
-                    st.session_state.diag_plot = (item["df"], r["Name"], strat)
-                    st.rerun()
+                    # Toggle: click same ticker again to close
+                    current = st.session_state.get("tab1_chart_sym", "")
+                    if current == r["Symbol"]:
+                        st.session_state.tab1_chart_sym  = ""
+                        st.session_state.tab1_chart_data = None
+                    else:
+                        st.session_state.tab1_chart_sym  = r["Symbol"]
+                        st.session_state.tab1_chart_data = (item["df"], r["Name"], strat)
+
+            # ── Inline chart (renders immediately, same tab, no rerun) ──────
+            if st.session_state.get("tab1_chart_sym") == r["Symbol"]:
+                t1_data = st.session_state.get("tab1_chart_data")
+                if t1_data:
+                    t1_df, t1_name, t1_strat = t1_data
+                    t1_last = t1_df.iloc[-1]
+                    t1_k  = float(t1_last["K"])
+                    t1_d  = float(t1_last["D"])
+                    t1_rsi = float(t1_last["RSI"])
+                    t1_vol = float(t1_last.get("VOL_Ratio", 1.0))
+
+                    ta, tb, tc, td = st.columns(4)
+                    ta.metric("現價",    f"${t1_df['Close'].iloc[-1]:.2f}")
+                    tb.metric("K / D",   f"{t1_k:.0f} / {t1_d:.0f}")
+                    tc.metric("RSI",     f"{t1_rsi:.1f}")
+                    td.metric("量比",    f"{t1_vol:.1f}x")
+
+                    st.markdown(
+                        f'<div class="sc-action" style="border-left:3px solid {t1_strat["color"]};margin-bottom:10px">'
+                        f'{t1_strat["html"]}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    if t1_strat.get("warnings"):
+                        st.warning("⚠️ " + "；".join(t1_strat["warnings"]))
+
+                    st.plotly_chart(
+                        make_tw_chart(t1_df, t1_name, t1_strat),
+                        use_container_width=True,
+                        config={"displayModeBar": False, "scrollZoom": False},
+                    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -858,7 +899,10 @@ with tab2:
     min_score = f3.slider("最低技術分 (0-10)", 0.0, 10.0, 4.0, 0.5)
 
     f4, f5 = st.columns(2)
-    sector_options = sorted(list(set(v["產業"] for v in MARKET_MAP.values() if v.get("產業"))))
+    sector_options = sorted(list(set(
+        str(v["產業"]) for v in MARKET_MAP.values()
+        if v.get("產業") and str(v.get("產業")) not in ("nan", "", "None", "NaN")
+    )))
     sector_filter  = f4.multiselect("篩選產業 (空=全部)", options=sector_options)
     max_price      = f5.number_input("股價上限 (TWD)", value=500.0, min_value=1.0, step=10.0)
 
@@ -960,11 +1004,7 @@ with tab3:
             else:
                 st.error(f"❌ 無法取得 {name}({code}) 資料，請稍後再試。")
 
-    # Chart panel (shared with Tab1 and Tab2 buttons)
-    if st.session_state.diag_plot is not None or (st.session_state.menu if "menu" in st.session_state else "") == "diagnosis":
-        pass
-
-# Global chart render — displayed in Tab3 when diag_plot is set
+# Global chart render lives inside the tab3 block above.
 with tab3:
     plot_data = st.session_state.get("diag_plot")
     if plot_data:
@@ -1081,8 +1121,10 @@ with tab5:
     col_a, col_b = st.columns(2)
     if col_a.button("🔄 強制刷新全部快取", use_container_width=True):
         st.cache_data.clear()
-        st.session_state.scan_results = None
-        st.session_state.diag_plot    = None
+        st.session_state.scan_results    = None
+        st.session_state.diag_plot       = None
+        st.session_state.tab1_chart_sym  = ""
+        st.session_state.tab1_chart_data = None
         st.rerun()
 
     if col_b.button("🗑️ 清除診斷圖表", use_container_width=True):
