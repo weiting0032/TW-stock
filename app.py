@@ -1,488 +1,1124 @@
-import streamlit as st
+"""
+台股戰情指揮中心 V15 Pro
+Multi-factor strategy · KD · 年線 · 量比 · 台股紅漲綠跌配色
+Dark precision UI · Mobile-first · 5-tab layout
+"""
+import math
+import random
+import time
+from datetime import datetime, timedelta
+
 import gspread
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import requests
-import time
-import random
-import math
-from datetime import datetime, timedelta
-import yfinance as yf  # 引入 yfinance 作為穩定備援
+import streamlit as st
+import yfinance as yf
+from plotly.subplots import make_subplots
 
-# --- 0. 基礎設定 ---
-PORTFOLIO_SHEET_TITLE = 'Streamlit TW Stock' 
-st.set_page_config(page_title="台股戰情指揮中心 V14 (Pro)", layout="wide", page_icon="📈", initial_sidebar_state="collapsed")
+# ─────────────────────────────────────────────────────────────────────────────
+# Config
+# ─────────────────────────────────────────────────────────────────────────────
+PORTFOLIO_SHEET_TITLE = "Streamlit TW Stock"
 
-# --- RWD UI 與台股專屬配色 (紅漲綠跌) ---
+st.set_page_config(
+    page_title="台股戰情中心",
+    page_icon="🔴",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Global CSS — Taiwan financial terminal dark theme
+# ─────────────────────────────────────────────────────────────────────────────
 st.markdown("""
-    <style>
-    [data-testid="stMetricValue"] { font-size: 1.5rem !important; font-weight: 800; white-space: nowrap !important; }
-    [data-testid="stMetricLabel"] { font-size: 0.95rem !important; color: #757575; font-weight: 600; }
-    .stMetric { border: 1px solid #e0e0e0; padding: 12px !important; border-radius: 12px; background: #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.02); }
-    
-    .mobile-card { border: 1px solid #eeeeee; border-radius: 16px; padding: 18px; margin-bottom: 15px; background: #ffffff; box-shadow: 0 4px 12px rgba(0,0,0,0.04); transition: transform 0.2s ease; }
-    .mobile-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.08); }
-    .mobile-card-title { font-size: 1.2rem; font-weight: 800; margin-bottom: 10px; color: #212121; border-bottom: 2px solid #f5f5f5; padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center;}
-    .mobile-card-text { font-size: 0.95rem; line-height: 1.6; color: #424242; }
-    
-    .action-box { margin-top: 12px; padding: 12px; background: #f8f9fa; border-radius: 10px; font-size: 0.95rem; border-left: 5px solid #1a2a6c; }
-    
-    .profit-up { color: #eb093b; font-weight: 800; }
-    .profit-down { color: #00a651; font-weight: 800; }
-    .profit-flat { color: #757575; font-weight: 800; }
-    
-    .group-tag { background-color: #e3f2fd; color: #1565c0; padding: 4px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: 700; }
-    .function-title { background-color: #1a2a6c; color: white; padding: 12px 20px; border-radius: 8px; margin-bottom: 20px; font-weight: 800; font-size: 1.2rem; box-shadow: 0 4px 10px rgba(26,42,108,0.2); }
-    
-    @media (max-width: 600px) {
-        [data-testid="stMetricValue"] { font-size: 1.2rem !important; }
-        .stMetric { padding: 10px !important; }
-        .mobile-card { padding: 15px; }
-        .mobile-card-title { font-size: 1.1rem; }
-    }
-    </style>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap');
+
+:root {
+  --bg:       #0A0C12;
+  --surface:  #111318;
+  --surface2: #181B23;
+  --border:   rgba(255,255,255,0.07);
+  --border2:  rgba(255,255,255,0.13);
+  --text:     #E6E8F0;
+  --muted:    #5A6072;
+  --up:       #E8192C;   /* 台股：紅漲 */
+  --down:     #00B050;   /* 台股：綠跌 */
+  --gold:     #F5A623;
+  --blue:     #3D8EFF;
+  --purple:   #9B6DFF;
+  --cyan:     #00D4FF;
+  --mono:     'JetBrains Mono', monospace;
+  --sans:     'Noto Sans TC', 'DM Sans', sans-serif;
+}
+
+html, body, [data-testid="stAppViewContainer"] {
+  background: var(--bg) !important; color: var(--text); font-family: var(--sans);
+}
+#MainMenu, footer, header { visibility: hidden; }
+[data-testid="stSidebarNav"] { display: none; }
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+/* ── Metrics ──────────────────────────────────────────────────────────────── */
+[data-testid="stMetricValue"] {
+  font-family: var(--mono) !important; font-size: 1.3rem !important;
+  font-weight: 700 !important; color: var(--text) !important; letter-spacing: -0.02em;
+}
+[data-testid="stMetricLabel"] {
+  font-size: 0.68rem !important; color: var(--muted) !important;
+  text-transform: uppercase; letter-spacing: 0.06em; font-family: var(--sans) !important;
+}
+[data-testid="stMetricDelta"] { font-size: 0.78rem !important; font-family: var(--mono) !important; }
+.stMetric {
+  background: var(--surface) !important; border: 1px solid var(--border) !important;
+  border-radius: 12px !important; padding: 14px 16px !important;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────────────────── */
+[data-baseweb="tab-list"] {
+  background: var(--surface) !important; border-radius: 12px !important;
+  padding: 4px !important; gap: 2px !important; border: 1px solid var(--border) !important;
+  flex-wrap: wrap !important;
+}
+[data-baseweb="tab"] {
+  background: transparent !important; color: var(--muted) !important;
+  border-radius: 8px !important; font-size: 0.75rem !important; font-weight: 700 !important;
+  font-family: var(--sans) !important; padding: 6px 10px !important; transition: all 0.2s;
+}
+[aria-selected="true"][data-baseweb="tab"] {
+  background: var(--up) !important; color: #fff !important;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+.stButton > button {
+  background: var(--surface2) !important; border: 1px solid var(--border2) !important;
+  color: var(--text) !important; border-radius: 10px !important;
+  font-family: var(--sans) !important; font-weight: 700 !important;
+  font-size: 0.85rem !important; transition: all 0.2s;
+}
+.stButton > button:hover { border-color: var(--up) !important; color: var(--up) !important; }
+
+/* ── Inputs ───────────────────────────────────────────────────────────────── */
+.stTextInput > div > div > input,
+.stNumberInput > div > div > input,
+.stSelectbox > div > div {
+  background: var(--surface2) !important; border: 1px solid var(--border2) !important;
+  border-radius: 10px !important; color: var(--text) !important;
+  font-family: var(--mono) !important; font-size: 0.9rem !important;
+}
+
+/* ── Expander ─────────────────────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+  background: var(--surface) !important; border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+}
+
+/* ── Custom: Header ───────────────────────────────────────────────────────── */
+.tw-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 0 20px; border-bottom: 1px solid var(--border); margin-bottom: 20px;
+}
+.tw-logo {
+  font-family: var(--mono); font-size: 1.1rem; font-weight: 700;
+  color: var(--up); letter-spacing: -0.02em;
+}
+.tw-logo span { color: var(--muted); font-weight: 400; }
+
+/* ── Badge ────────────────────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; border-radius: 999px;
+  font-size: 0.68rem; font-weight: 700; font-family: var(--sans);
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+.badge-up   { background: rgba(232,25,44,0.15); color: var(--up);   border: 1px solid rgba(232,25,44,0.35); }
+.badge-down { background: rgba(0,176,80,0.15);  color: var(--down); border: 1px solid rgba(0,176,80,0.35); }
+.badge-flat { background: rgba(90,96,114,0.2);  color: var(--muted); border: 1px solid var(--border2); }
+.badge-gold { background: rgba(245,166,35,0.12); color: var(--gold); border: 1px solid rgba(245,166,35,0.3); }
+.badge-blue { background: rgba(61,142,255,0.12); color: var(--blue); border: 1px solid rgba(61,142,255,0.3); }
+
+/* ── Stock card ───────────────────────────────────────────────────────────── */
+.sc {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 16px; padding: 16px; margin-bottom: 10px;
+  position: relative; overflow: hidden;
+}
+.sc-accent { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; border-radius: 16px 0 0 16px; }
+.sc-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+.sc-name { font-size: 1.0rem; font-weight: 900; color: var(--text); font-family: var(--sans); }
+.sc-code { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); font-weight: 400; }
+.sc-price { font-family: var(--mono); font-size: 1.5rem; font-weight: 700; }
+.sc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 14px; margin-top: 10px; }
+.sc-kv-label { font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-family: var(--sans); }
+.sc-kv-value { font-family: var(--mono); font-size: 0.85rem; color: var(--text); font-weight: 600; }
+.sc-action {
+  margin-top: 10px; padding: 9px 12px; background: var(--surface2);
+  border-radius: 9px; font-size: 0.8rem; font-family: var(--sans);
+}
+.sc-divider { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+
+/* weight bar */
+.wbar-bg { background: var(--surface2); border-radius: 999px; height: 3px; margin-top: 8px; }
+.wbar-fill { height: 3px; border-radius: 999px; }
+
+/* signal text colors */
+.sig-buy  { color: var(--up); font-weight: 900; }
+.sig-sell { color: var(--down); font-weight: 900; }
+.sig-hold { color: var(--gold); font-weight: 900; }
+.sig-watch{ color: var(--muted); font-weight: 900; }
+
+/* ── Scanner row ──────────────────────────────────────────────────────────── */
+.sk-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 13px; padding: 12px 15px; margin-bottom: 7px;
+  display: flex; align-items: center; gap: 12px;
+}
+.sk-rank { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); min-width: 20px; }
+.sk-ticker { font-family: var(--mono); font-size: 0.95rem; font-weight: 700; color: var(--text); }
+.sk-name { font-size: 0.75rem; color: var(--muted); margin-top: 1px; font-family: var(--sans); }
+.sk-score { font-family: var(--mono); font-size: 0.9rem; font-weight: 700; color: var(--up); }
+.sk-reason { font-size: 0.7rem; color: var(--muted); margin-top: 2px; font-family: var(--sans); }
+.sbar { background: var(--surface2); border-radius: 999px; height: 3px; flex: 1; }
+.sbar-fill { height: 3px; border-radius: 999px; background: linear-gradient(90deg, var(--up), var(--gold)); }
+
+/* ── Perf stats ───────────────────────────────────────────────────────────── */
+.ps-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ps { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+.ps-label { font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-family: var(--sans); }
+.ps-value { font-family: var(--mono); font-size: 1.2rem; font-weight: 700; margin-top: 4px; }
+
+.qdiv { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+.qsec { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-family: var(--sans); font-weight: 700; margin: 16px 0 10px; }
+
+@media (max-width: 600px) {
+  [data-testid="stMetricValue"] { font-size: 1.05rem !important; }
+  .sc-price { font-size: 1.2rem; }
+  .sc { padding: 13px; }
+}
+</style>
 """, unsafe_allow_html=True)
 
-# --- Initialize Session States ---
-if 'menu' not in st.session_state:
-    st.session_state.menu = "portfolio"
-if 'current_plot' not in st.session_state:
-    st.session_state.current_plot = None
 
-# --- 1. 核心數據處理 ---
+# ─────────────────────────────────────────────────────────────────────────────
+# Data layer
+# ─────────────────────────────────────────────────────────────────────────────
 def get_gsheet_client():
-    credentials = st.secrets["gcp_service_account"]
-    return gspread.service_account_from_dict(credentials)
+    return gspread.service_account_from_dict(st.secrets["gcp_service_account"])
 
-@st.cache_data(ttl=300)
-def load_portfolio():
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_portfolio() -> pd.DataFrame:
     try:
         gc = get_gsheet_client()
         sh = gc.open(PORTFOLIO_SHEET_TITLE)
         df = pd.DataFrame(sh.sheet1.get_all_records())
-        df['Symbol'] = df['Symbol'].astype(str).str.zfill(4)
-        df['Cost'] = pd.to_numeric(df['Cost'], errors='coerce').fillna(0.0)
-        df['Shares'] = pd.to_numeric(df['Shares'], errors='coerce').fillna(0)
+        df["Symbol"] = df["Symbol"].astype(str).str.zfill(4)
+        df["Cost"]   = pd.to_numeric(df["Cost"],   errors="coerce").fillna(0.0)
+        df["Shares"] = pd.to_numeric(df["Shares"], errors="coerce").fillna(0)
         return df
-    except:
-        return pd.DataFrame(columns=['Symbol', 'Name', 'Cost', 'Shares', 'Note'])
+    except Exception:
+        return pd.DataFrame(columns=["Symbol", "Name", "Cost", "Shares", "Note"])
 
-@st.cache_data(ttl=3600)
-def get_market_data():
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_market_data() -> dict:
+    """Wespai 市場報價 + PE/PB"""
     url = "https://stock.wespai.com/lists"
     try:
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
+        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
         df = pd.read_html(res.text)[0]
         data = df.iloc[:, [0, 1, 2, 3, 14, 15]].copy()
-        data.columns = ['代碼', '名稱', '產業', '現價', 'PE', 'PB']
-        data['代碼'] = data['代碼'].astype(str).str.zfill(4)
-        data['現價'] = pd.to_numeric(data['現價'], errors='coerce')
-        data['PE'] = pd.to_numeric(data['PE'], errors='coerce').fillna(999.0)
-        data['PB'] = pd.to_numeric(data['PB'], errors='coerce').fillna(999.0)
-        return data.set_index('代碼').to_dict('index')
+        data.columns = ["代碼", "名稱", "產業", "現價", "PE", "PB"]
+        data["代碼"] = data["代碼"].astype(str).str.zfill(4)
+        data["現價"] = pd.to_numeric(data["現價"], errors="coerce")
+        data["PE"]   = pd.to_numeric(data["PE"],   errors="coerce").fillna(999.0)
+        data["PB"]   = pd.to_numeric(data["PB"],   errors="coerce").fillna(999.0)
+        return data.set_index("代碼").to_dict("index")
     except Exception as e:
-        st.error(f"市場數據抓取失敗: {e}")
+        st.error(f"市場報價抓取失敗: {e}")
         return {}
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★ Enhanced indicator engine ★
+# ─────────────────────────────────────────────────────────────────────────────
+def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame | None:
+    """計算全套技術指標：MA5/20/60/240、BB、ATR、KD(9)、RSI、MACD、OBV、量比"""
+    if df is None or len(df) < 60:
+        return None
+    df = df.copy()
+
+    # ── Moving Averages ───────────────────────────────────────────────────────
+    df["SMA5"]  = df["Close"].rolling(5).mean()
+    df["SMA20"] = df["Close"].rolling(20).mean()
+    df["SMA60"] = df["Close"].rolling(60).mean()
+    df["SMA240"] = df["Close"].rolling(min(240, len(df))).mean()  # 年線
+
+    # ── Bollinger Bands ───────────────────────────────────────────────────────
+    std20 = df["Close"].rolling(20).std()
+    df["BB_Upper"] = df["SMA20"] + 2 * std20
+    df["BB_Lower"] = df["SMA20"] - 2 * std20
+    df["BB_Width"] = (df["BB_Upper"] - df["BB_Lower"]) / (df["SMA20"] + 1e-9)
+
+    # ── ATR (14) ──────────────────────────────────────────────────────────────
+    hl = df["High"] - df["Low"]
+    hc = (df["High"] - df["Close"].shift(1)).abs()
+    lc = (df["Low"]  - df["Close"].shift(1)).abs()
+    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
+    df["ATR"] = tr.rolling(14).mean()
+
+    # ── KD Stochastic (9,3,3) ────────────────────────────────────────────────
+    n = 9
+    low_n  = df["Low"].rolling(n).min()
+    high_n = df["High"].rolling(n).max()
+    df["RSV"] = (df["Close"] - low_n) / (high_n - low_n + 1e-9) * 100
+    df["K"] = df["RSV"].ewm(com=2, adjust=False).mean()
+    df["D"] = df["K"].ewm(com=2, adjust=False).mean()
+    df["J"] = 3 * df["K"] - 2 * df["D"]
+
+    # ── RSI (14) ──────────────────────────────────────────────────────────────
+    delta = df["Close"].diff()
+    gain  = delta.clip(lower=0).rolling(14).mean()
+    loss  = (-delta.clip(upper=0)).rolling(14).mean()
+    df["RSI"] = 100 - (100 / (1 + gain / (loss + 1e-9)))
+
+    # ── MACD (12,26,9) ────────────────────────────────────────────────────────
+    ema12 = df["Close"].ewm(span=12, adjust=False).mean()
+    ema26 = df["Close"].ewm(span=26, adjust=False).mean()
+    df["MACD"]   = ema12 - ema26
+    df["Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
+    df["Hist"]   = df["MACD"] - df["Signal"]
+
+    # ── Volume indicators ─────────────────────────────────────────────────────
+    df["VOL_SMA20"] = df["Volume"].rolling(20).mean()
+    df["VOL_Ratio"] = df["Volume"] / (df["VOL_SMA20"] + 1e-9)  # 量比
+
+    # ── OBV ───────────────────────────────────────────────────────────────────
+    obv = [0]
+    cls, vols = df["Close"].tolist(), df["Volume"].tolist()
+    for i in range(1, len(df)):
+        if cls[i] > cls[i - 1]:   obv.append(obv[-1] + vols[i])
+        elif cls[i] < cls[i - 1]: obv.append(obv[-1] - vols[i])
+        else:                      obv.append(obv[-1])
+    df["OBV"] = obv
+
+    # ── 52W High/Low ─────────────────────────────────────────────────────────
+    df["High52W"] = df["High"].rolling(min(252, len(df))).max()
+    df["Low52W"]  = df["Low"].rolling(min(252, len(df))).min()
+
+    return df.dropna(subset=["SMA20", "SMA60", "K", "D", "RSI"]).copy()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_stock_history(symbol: str) -> pd.DataFrame | None:
+    """資料抓取引擎 (FinMind 優先 → YFinance 上市/上櫃備援)"""
+    # 1. FinMind
+    try:
+        time.sleep(random.uniform(0.05, 0.2))
+        end_date   = datetime.now().strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=760)).strftime("%Y-%m-%d")
+        res = requests.get(
+            "https://api.finmindtrade.com/api/v4/data",
+            params={"dataset": "TaiwanStockPrice", "data_id": symbol,
+                    "start_date": start_date, "end_date": end_date},
+            timeout=5,
+        )
+        if res.status_code == 200:
+            data = res.json()
+            if data.get("msg") == "success" and data.get("data"):
+                df = pd.DataFrame(data["data"])
+                df = df.rename(columns={
+                    "date": "Date", "open": "Open", "max": "High",
+                    "min": "Low", "close": "Close", "trading_volume": "Volume"
+                })
+                df["Date"] = pd.to_datetime(df["Date"])
+                df.set_index("Date", inplace=True)
+                result = calculate_indicators(df)
+                if result is not None:
+                    return result
+    except Exception:
+        pass
+
+    # 2. YFinance (上市 .TW / 上櫃 .TWO)
+    for suffix in [".TW", ".TWO"]:
+        try:
+            tk = yf.Ticker(f"{symbol}{suffix}")
+            df = tk.history(period="3y", auto_adjust=True)
+            if not df.empty:
+                if df.index.tz is not None:
+                    df.index = df.index.tz_localize(None)
+                result = calculate_indicators(df)
+                if result is not None:
+                    return result
+        except Exception:
+            continue
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★ Multi-factor strategy engine ★
+# ─────────────────────────────────────────────────────────────────────────────
+def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0) -> dict:
+    """
+    多因子評分策略 (0–10分)
+    因子：趨勢、KD、RSI、BB突破、量比、OBV、年線位置
+    訊號：BUY / HOLD / SELL_PARTIAL / SELL_EXIT / WATCH
+    """
+    if df is None or df.empty or len(df) < 20:
+        return _default_strat("資料不足", "#5A6072")
+
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) >= 2 else last
+
+    close    = float(last["Close"])
+    sma5     = float(last["SMA5"])
+    sma20    = float(last["SMA20"])
+    sma60    = float(last["SMA60"])
+    sma240   = float(last.get("SMA240", 0) or 0)
+    atr      = float(last.get("ATR", 0) or 0)
+    rsi      = float(last["RSI"])
+    k, d     = float(last["K"]), float(last["D"])
+    j        = float(last["J"])
+    macd_h   = float(last["Hist"])
+    bb_w     = float(last["BB_Width"])
+    vol_r    = float(last.get("VOL_Ratio", 1.0))
+    high52   = float(last.get("High52W", close))
+    low52    = float(last.get("Low52W",  close))
+
+    # ── Stop / Take Profit ────────────────────────────────────────────────────
+    stop_loss   = max(close - 2.0 * atr, sma60 * 0.98, close * 0.88) if atr else close * 0.88
+    take_profit = close + 3.0 * atr if atr else close * 1.12
+    # Dynamic TP based on 52W high
+    if high52 > close:
+        take_profit = min(high52, take_profit)
+
+    # ── Lot sizing (台股 1張=1000股) ─────────────────────────────────────────
+    base_lots = 1 if close > 150 else 2 if close > 60 else 3
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # FACTOR SCORING (滿分 10)
+    # ═══════════════════════════════════════════════════════════════════════
+    score    = 0.0
+    reasons  = []
+    warnings = []
+
+    # 1. Trend alignment (均線多頭排列)
+    if close > sma20 > sma60:
+        score += 2.0; reasons.append("均線多頭")
+        if sma5 > sma20:
+            score += 0.5; reasons.append("5日線向上")
+    elif close < sma20 < sma60:
+        score -= 1.0; warnings.append("均線空頭")
+
+    # 2. Annual line position (年線 — 長線趨勢濾網)
+    if sma240 > 0:
+        if close > sma240:
+            score += 1.0; reasons.append("站上年線")
+        else:
+            score -= 0.5; warnings.append("年線下方")
+
+    # 3. KD indicator
+    k_gc_prev = float(prev["K"]) < float(prev["D"])  # previous K below D
+    k_gc_now  = k > d                                  # current K above D = 黃金交叉
+    if k < 20 and d < 20 and k_gc_now and k_gc_prev:
+        score += 2.5; reasons.append("KD低檔黃金交叉")
+    elif k < 30 and k > d:
+        score += 1.5; reasons.append("KD低檔翻揚")
+    elif k > 80 and d > 80:
+        score -= 1.0; warnings.append("KD高檔超買")
+    elif k > 85 and j > 90:
+        score -= 1.5; warnings.append("KD超買+J值過熱")
+
+    # 4. RSI zone
+    if rsi < 30:
+        score += 1.5; reasons.append(f"RSI超賣({rsi:.0f})")
+    elif 40 <= rsi <= 65:
+        score += 0.5; reasons.append("RSI健康")
+    elif rsi > 80:
+        score -= 1.0; warnings.append(f"RSI超買({rsi:.0f})")
+
+    # 5. BB squeeze breakout
+    prev_bb_w = float(prev.get("BB_Width", 1.0))
+    is_squeeze = bb_w < 0.08
+    is_breakout = (close > float(last["BB_Upper"])) and (vol_r > 1.5) and (prev_bb_w < 0.10)
+    if is_breakout:
+        score += 2.5; reasons.append("BB壓縮放量突破")
+    elif is_squeeze:
+        reasons.append("BB醞釀蓄力")
+
+    # 6. Volume ratio (量比)
+    if vol_r >= 2.0 and close >= sma20:
+        score += 1.0; reasons.append(f"大量上漲({vol_r:.1f}倍)")
+    elif vol_r < 0.5:
+        warnings.append("成交量萎縮")
+
+    # 7. MACD histogram direction
+    if macd_h > 0 and float(prev["Hist"]) < macd_h:
+        score += 0.5; reasons.append("MACD翻多")
+    elif macd_h < 0 and float(prev["Hist"]) > macd_h:
+        score -= 0.5; warnings.append("MACD轉弱")
+
+    # 8. Near 52W high (市場強勢股過濾)
+    if close >= high52 * 0.95:
+        score += 0.5; reasons.append("接近年高")
+    near_bottom = (close - low52) / max(high52 - low52, 1e-9)
+    if near_bottom < 0.15:
+        score += 0.5; reasons.append("接近年低支撐")
+
+    # Clamp
+    score = max(0.0, min(10.0, score))
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # SIGNAL DECISION TREE
+    # ═══════════════════════════════════════════════════════════════════════
+    reason_str   = "、".join(reasons[:4]) if reasons else "無明顯因子"
+    warning_str  = "；".join(warnings)    if warnings else ""
+
+    # ── 優先：出場保護 ────────────────────────────────────────────────────
+    if held_shares > 0 and close < stop_loss:
+        return {
+            "action": "SELL_EXIT", "name": "停損出場",
+            "color": "#00B050", "score": score,
+            "tp": take_profit, "sl": stop_loss,
+            "suggest_lots": math.ceil(held_shares / 1000),
+            "reasons": reasons, "warnings": warnings,
+            "html": (f"<span class='sig-sell'>⚠️ 跌破 ATR 停損防線 ${stop_loss:.2f}</span><br>"
+                     f"紀律執行出場，<b>{math.ceil(held_shares/1000)} 張</b>全部出清。{warning_str}"),
+        }
+
+    # ── 高檔獲利了結 ──────────────────────────────────────────────────────
+    if held_shares > 0 and (k > 85 and j > 90 and rsi > 78):
+        sell_lots = max(1, math.floor(held_shares / 1000 / 2))
+        return {
+            "action": "SELL_PARTIAL", "name": "高檔減碼",
+            "color": "#F5A623", "score": score,
+            "tp": take_profit, "sl": stop_loss,
+            "suggest_lots": sell_lots,
+            "reasons": reasons, "warnings": warnings,
+            "html": (f"<span class='sig-hold'>💰 技術面高檔過熱 (KD {k:.0f}/{d:.0f}，RSI {rsi:.0f})</span><br>"
+                     f"建議先減碼 <b>{sell_lots} 張</b>鎖利，保留剩餘部位。"),
+        }
+
+    # ── 強力進場 ─────────────────────────────────────────────────────────
+    if score >= 5.0 and close >= sma20:
+        return {
+            "action": "BUY", "name": "強勢進場",
+            "color": "#E8192C", "score": score,
+            "tp": take_profit, "sl": stop_loss,
+            "suggest_lots": base_lots,
+            "reasons": reasons, "warnings": warnings,
+            "html": (f"<span class='sig-buy'>🚀 多因子共振，進場訊號！(分數 {score:.1f}/10)</span><br>"
+                     f"<b>理由</b>：{reason_str}<br>"
+                     f"建議買入 <b>{base_lots} 張</b>，停損 ${stop_loss:.2f}，目標 ${take_profit:.2f}"),
+        }
+
+    # ── 中度進場 ─────────────────────────────────────────────────────────
+    if 3.0 <= score < 5.0 and close >= sma20:
+        return {
+            "action": "BUY_WATCH", "name": "留意機會",
+            "color": "#F5A623", "score": score,
+            "tp": take_profit, "sl": stop_loss,
+            "suggest_lots": 1,
+            "reasons": reasons, "warnings": warnings,
+            "html": (f"<span class='sig-hold'>📊 有一定支撐 (分數 {score:.1f}/10)</span><br>"
+                     f"<b>理由</b>：{reason_str}<br>可小量試單，等待突破確認。"),
+        }
+
+    # ── 續抱 ─────────────────────────────────────────────────────────────
+    if held_shares > 0 and close > sma20:
+        return {
+            "action": "HOLD", "name": "多頭續抱",
+            "color": "#F5A623", "score": score,
+            "tp": take_profit, "sl": stop_loss,
+            "suggest_lots": 0,
+            "reasons": reasons, "warnings": warnings,
+            "html": (f"<span class='sig-hold'>🛡️ 趨勢向上，持股不動</span><br>"
+                     f"跌破季線 ${sma60:.2f} 或停損 ${stop_loss:.2f} 再出場。"),
+        }
+
+    # ── 觀望 ─────────────────────────────────────────────────────────────
+    return {
+        "action": "WATCH", "name": "觀望整理",
+        "color": "#5A6072", "score": score,
+        "tp": take_profit, "sl": stop_loss,
+        "suggest_lots": 0,
+        "reasons": reasons, "warnings": warnings,
+        "html": (f"<span class='sig-watch'>☕ 訊號不明確 (分數 {score:.1f}/10)</span><br>"
+                 f"等待均線、KD、量能三者共振後再進場。"),
+    }
+
+
+def _default_strat(name, color):
+    return {
+        "action": "WATCH", "name": name, "color": color, "score": 0,
+        "tp": None, "sl": None, "suggest_lots": 0,
+        "reasons": [], "warnings": [],
+        "html": f"<span style='color:{color}'>{name}</span>",
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UI helpers
+# ─────────────────────────────────────────────────────────────────────────────
 MARKET_MAP = get_market_data()
 STOCK_OPTIONS = [f"{k} {v['名稱']} ({v['產業']})" for k, v in MARKET_MAP.items()]
 
-def calculate_indicators(df):
-    """計算所有技術指標"""
-    if df is None or len(df) < 60:
-        return None
-        
-    df = df.copy()
-    df['SMA20'] = df['Close'].rolling(20).mean()
-    df['SMA60'] = df['Close'].rolling(60).mean()
-    std20 = df['Close'].rolling(20).std()
-    df['BB_Upper'] = df['SMA20'] + (std20 * 2)
-    df['BB_Lower'] = df['SMA20'] - (std20 * 2)
-    df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / (df['SMA20'] + 1e-9)
-    
-    hl = df['High'] - df['Low']
-    hc = (df['High'] - df['Close'].shift(1)).abs()
-    lc = (df['Low'] - df['Close'].shift(1)).abs()
-    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
-    df['ATR'] = tr.rolling(14).mean()
-    
-    delta = df['Close'].diff()
-    gain = delta.clip(lower=0).rolling(14).mean()
-    loss = -delta.clip(upper=0).rolling(14).mean()
-    df['RSI'] = 100 - (100 / (1 + (gain/(loss+1e-9))))
-    
-    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
-    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = exp1 - exp2
-    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    df['Hist'] = df['MACD'] - df['Signal']
-    
-    df['VOL_SMA20'] = df['Volume'].rolling(20).mean()
-    return df.dropna().copy()
 
-@st.cache_data(ttl=600, show_spinner=False)
-def fetch_stock_history(symbol):
-    """資料抓取引擎 (FinMind 優先，YFinance 完美備援)"""
-    # 1. 嘗試 FinMind
-    try:
-        time.sleep(random.uniform(0.1, 0.3))
-        end_date = datetime.now().strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
-        url = "https://api.finmindtrade.com/api/v4/data"
-        params = {"dataset": "TaiwanStockPrice", "data_id": symbol, "start_date": start_date, "end_date": end_date}
-        res = requests.get(url, params=params, timeout=5)
-        if res.status_code == 200:
-            data = res.json()
-            if data.get('msg') == 'success' and data.get('data'):
-                df = pd.DataFrame(data['data'])
-                df = df.rename(columns={'date': 'Date', 'open': 'Open', 'max': 'High', 'min': 'Low', 'close': 'Close', 'trading_volume': 'Volume'})
-                df['Date'] = pd.to_datetime(df['Date'])
-                df.set_index('Date', inplace=True)
-                df_calc = calculate_indicators(df)
-                if df_calc is not None: return df_calc
-    except Exception:
-        pass # FinMind 失敗，往下走備援
-        
-    # 2. 備援 YFinance (涵蓋上市 .TW 與上櫃 .TWO)
-    try:
-        tk = yf.Ticker(f"{symbol}.TW")
-        df = tk.history(period="2y", auto_adjust=True)
-        if df.empty:
-            tk = yf.Ticker(f"{symbol}.TWO")
-            df = tk.history(period="2y", auto_adjust=True)
-            
-        if not df.empty:
-            if df.index.tz is not None:
-                df.index = df.index.tz_localize(None) # 移除時區避免繪圖報錯
-            df_calc = calculate_indicators(df)
-            if df_calc is not None: return df_calc
-    except Exception:
-        pass
-        
-    return None
+def fmt_tw_pl(val: float) -> str:
+    if val > 0: return f'<span style="color:var(--up);font-weight:900">▲{val:,.2f}</span>'
+    if val < 0: return f'<span style="color:var(--down);font-weight:900">▼{abs(val):,.2f}</span>'
+    return f'<span style="color:var(--muted)">—{val:,.2f}</span>'
 
-def get_strategy_suggestion(df, held_shares=0):
-    """策略核心：回傳結構化訊號、具體價格與建議張數"""
-    if df is None or df.empty or len(df) < 20: 
-        return {"action": "WATCH", "name": "資料不足", "color": "#9e9e9e", "html": "歷史資料不足以產生技術訊號", "tp": None, "sl": None, "suggest_qty": 0}
-        
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    
-    close, rsi, macd_hist = float(last['Close']), float(last['RSI']), float(last['Hist'])
-    atr, sma20, sma60 = float(last.get('ATR', 0)), float(last['SMA20']), float(last['SMA60'])
-    bb_width, vol, vol_sma20 = float(last['BB_Width']), float(last['Volume']), float(last['VOL_SMA20'])
-    
-    # 預設防守與獲利點 (ATR倍數法)
-    stop_loss = max(close - 1.5 * atr, close * 0.9) if atr else close * 0.9
-    take_profit = close + 3 * atr if atr else close * 1.1
-    
-    # 台股一張為 1000 股，以此為基礎單位建議
-    base_qty_lots = 1 if close > 100 else 2 
-    
-    is_squeeze = bb_width < 0.08
-    is_breakout = close > last['BB_Upper'] and vol > vol_sma20 * 1.5
-    is_bullish = close > sma20 and sma20 > sma60
-    
-    res = {"action": "WATCH", "tp": take_profit, "sl": stop_loss, "suggest_qty": 0}
 
-    # 1. 出場訊號
-    if held_shares > 0 and (close < sma60 or rsi > 80):
-        res.update({
-            "action": "SELL", "name": "獲利了結/停損", "color": "#00a651",
-            "html": f"<b style='color:#00a651'>📉 跌破支撐或過熱 (RSI: {rsi:.1f})</b><br>動能減弱，建議收回資金。",
-            "suggest_qty": math.ceil(held_shares / 1000)
-        })
-    # 2. 強勢擠壓突破
-    elif is_breakout and prev['BB_Width'] < 0.1:
-        res.update({
-            "action": "BUY", "name": "壓縮放量突破", "color": "#eb093b",
-            "html": f"<b style='color:#eb093b'>🚀 布林壓縮後放量突破</b><br>動能爆發，建議順勢進場。",
-            "suggest_qty": base_qty_lots
-        })
-    # 3. 超賣反彈
-    elif rsi < 30 and macd_hist > prev['Hist']:
-        res.update({
-            "action": "BUY", "name": "超賣轉折", "color": "#eb093b",
-            "html": f"<b style='color:#eb093b'>🔥 底部背離/轉折 (RSI: {rsi:.1f})</b><br>指標低檔翻揚，具備搶反彈空間。",
-            "suggest_qty": base_qty_lots
-        })
-    # 4. 多頭續抱
-    elif is_bullish:
-        res.update({
-            "action": "HOLD", "name": "多頭續抱", "color": "#f57c00",
-            "html": f"<b style='color:#f57c00'>📈 均線多頭排列</b><br>趨勢向上，沿 20MA 操作。",
-            "suggest_qty": 0
-        })
-    # 5. 觀望
-    else:
-        res.update({
-            "action": "WATCH", "name": "觀望整理", "color": "#757575",
-            "html": f"<b style='color:#757575'>☕ 盤整無明顯方向</b><br>等待均線糾結或突破表態。",
-            "suggest_qty": 0
-        })
-        
-    return res
+def pl_colour(val: float) -> str:
+    return "var(--up)" if val > 0 else "var(--down)" if val < 0 else "var(--muted)"
 
-def format_color(val):
-    if val > 0: return f'<span class="profit-up">+{val:,.2f}</span>'
-    elif val < 0: return f'<span class="profit-down">{val:,.2f}</span>'
-    return f'<span class="profit-flat">{val:,.2f}</span>'
 
-# --- 2. 側邊導覽 ---
-with st.sidebar:
-    st.title("🛡️ 戰情控制台")
-    mobile_mode = st.toggle("📱 手機卡片模式", value=True)
-    
-    st.markdown("---")
-    if st.button("🚀 庫存動態", use_container_width=True): 
-        st.session_state.menu = "portfolio"
-    if st.button("💰 潛力快篩", use_container_width=True): 
-        st.session_state.menu = "screening"
-    if st.button("🔍 個股診斷", use_container_width=True): 
-        st.session_state.menu = "diagnosis"
-    if st.button("📝 庫存管理", use_container_width=True): 
-        st.session_state.menu = "management"
-    
-    if st.button("🔄 強制刷新資料", use_container_width=True):
-        st.cache_data.clear()
-        st.session_state.current_plot = None
-        st.rerun()
+def signal_badge_html(strat: dict) -> str:
+    a = strat["action"]
+    if a in ("BUY", "BUY_WATCH"):   return f'<span class="badge badge-up">▲ {strat["name"]}</span>'
+    if a in ("SELL_EXIT", "SELL_PARTIAL"): return f'<span class="badge badge-down">▼ {strat["name"]}</span>'
+    if a == "HOLD":  return f'<span class="badge badge-gold">＝ {strat["name"]}</span>'
+    return f'<span class="badge badge-flat">— {strat["name"]}</span>'
 
-# 載入庫存
-if 'df_portfolio' not in st.session_state:
+
+def score_bar_html(score: float) -> str:
+    pct = min(100, score / 10 * 100)
+    col = "var(--up)" if score >= 5 else "var(--gold)" if score >= 3 else "var(--muted)"
+    return f'<div class="sbar"><div class="sbar-fill" style="width:{pct:.0f}%;background:{col}"></div></div>'
+
+
+def accent_colour(strat: dict) -> str:
+    a = strat["action"]
+    if a in ("BUY", "BUY_WATCH"):        return "var(--up)"
+    if a in ("SELL_EXIT", "SELL_PARTIAL"): return "var(--down)"
+    if a == "HOLD":                       return "var(--gold)"
+    return "var(--muted)"
+
+
+def get_tw_session() -> str:
+    import pytz
+    tw = pytz.timezone("Asia/Taipei")
+    now = datetime.now(tw)
+    if now.weekday() >= 5:
+        return "休市"
+    t = now.time()
+    if datetime.strptime("08:30", "%H:%M").time() <= t < datetime.strptime("09:00", "%H:%M").time():
+        return "盤前"
+    if datetime.strptime("09:00", "%H:%M").time() <= t < datetime.strptime("13:30", "%H:%M").time():
+        return "交易中"
+    if datetime.strptime("13:30", "%H:%M").time() <= t < datetime.strptime("14:00", "%H:%M").time():
+        return "盤後"
+    return "休市"
+
+
+def make_tw_chart(df: pd.DataFrame, name: str, strat: dict) -> go.Figure:
+    """4-panel chart: K線BB / 量 / KD / MACD"""
+    p = df.tail(120)
+    fig = make_subplots(
+        rows=4, cols=1, shared_xaxes=True,
+        row_heights=[0.45, 0.15, 0.20, 0.20],
+        vertical_spacing=0.025,
+        subplot_titles=(f"{name} — K線 + BB", "成交量", "KD 隨機指標", "MACD"),
+    )
+
+    # ── K線 ────────────────────────────────────────────────────────────────
+    fig.add_trace(go.Candlestick(
+        x=p.index, open=p["Open"], high=p["High"], low=p["Low"], close=p["Close"],
+        name="K", increasing_fillcolor="#E8192C", increasing_line_color="#E8192C",
+        decreasing_fillcolor="#00B050", decreasing_line_color="#00B050",
+    ), row=1, col=1)
+
+    for col_name, colour, dash in [
+        ("SMA5", "#F5A623", "solid"), ("SMA20", "#3D8EFF", "dot"), ("SMA60", "#9B6DFF", "dot")
+    ]:
+        fig.add_trace(go.Scatter(x=p.index, y=p[col_name], line=dict(color=colour, width=1.2, dash=dash), name=col_name), row=1, col=1)
+
+    fig.add_trace(go.Scatter(x=p.index, y=p["BB_Upper"], line=dict(color="rgba(255,255,255,0.12)", width=1), showlegend=False), row=1, col=1)
+    fig.add_trace(go.Scatter(x=p.index, y=p["BB_Lower"], fill="tonexty", fillcolor="rgba(61,142,255,0.04)",
+                             line=dict(color="rgba(255,255,255,0.12)", width=1), showlegend=False), row=1, col=1)
+    # SL / TP lines
+    if strat.get("sl"):
+        fig.add_hline(y=strat["sl"], line_dash="dot", line_color="#00B050", row=1, col=1,
+                      annotation_text=f"SL {strat['sl']:.2f}", annotation_font_color="#00B050")
+    if strat.get("tp"):
+        fig.add_hline(y=strat["tp"], line_dash="dot", line_color="#E8192C", row=1, col=1,
+                      annotation_text=f"TP {strat['tp']:.2f}", annotation_font_color="#E8192C")
+
+    # ── Volume ────────────────────────────────────────────────────────────
+    vol_colours = ["#E8192C" if p["Close"].iloc[i] >= p["Open"].iloc[i] else "#00B050" for i in range(len(p))]
+    fig.add_trace(go.Bar(x=p.index, y=p["Volume"], marker_color=vol_colours, name="量"), row=2, col=1)
+    fig.add_trace(go.Scatter(x=p.index, y=p["VOL_SMA20"], line=dict(color="#F5A623", width=1.2), name="均量"), row=2, col=1)
+
+    # ── KD ────────────────────────────────────────────────────────────────
+    fig.add_trace(go.Scatter(x=p.index, y=p["K"], line=dict(color="#3D8EFF", width=1.5), name="K"), row=3, col=1)
+    fig.add_trace(go.Scatter(x=p.index, y=p["D"], line=dict(color="#F5A623", width=1.5), name="D"), row=3, col=1)
+    for lvl, c in [(80, "rgba(232,25,44,0.25)"), (20, "rgba(0,176,80,0.25)")]:
+        fig.add_hline(y=lvl, line_color=c, line_dash="dot", row=3, col=1)
+
+    # ── MACD ──────────────────────────────────────────────────────────────
+    hist_cols = ["#E8192C" if v >= 0 else "#00B050" for v in p["Hist"]]
+    fig.add_trace(go.Bar(x=p.index, y=p["Hist"], marker_color=hist_cols, name="OSC"), row=4, col=1)
+    fig.add_trace(go.Scatter(x=p.index, y=p["MACD"],   line=dict(color="#3D8EFF", width=1.2), name="DIF"), row=4, col=1)
+    fig.add_trace(go.Scatter(x=p.index, y=p["Signal"], line=dict(color="#F5A623", width=1.2), name="MACD"), row=4, col=1)
+
+    fig.update_layout(
+        template="plotly_dark", height=560,
+        margin=dict(l=0, r=0, t=28, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis_rangeslider_visible=False, showlegend=False,
+        font=dict(family="JetBrains Mono", size=9),
+    )
+    for i in range(1, 5):
+        fig.update_layout(**{f"xaxis{i if i > 1 else ''}": dict(gridcolor="rgba(255,255,255,0.04)"),
+                              f"yaxis{i if i > 1 else ''}": dict(gridcolor="rgba(255,255,255,0.04)")})
+    return fig
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Session state init
+# ─────────────────────────────────────────────────────────────────────────────
+if "df_portfolio" not in st.session_state:
     st.session_state.df_portfolio = load_portfolio()
+if "scan_results" not in st.session_state:
+    st.session_state.scan_results = None
+if "diag_plot" not in st.session_state:
+    st.session_state.diag_plot = None
 
-# --- 各項功能邏輯 ---
-if st.session_state.menu == "portfolio":
-    st.markdown('<div class="function-title">🚀 庫存動態監控 (自動校正 RWD)</div>', unsafe_allow_html=True)
-    portfolio = st.session_state.df_portfolio
-    
-    if not portfolio.empty:
-        total_mv, total_cost = 0.0, 0.0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Header
+# ─────────────────────────────────────────────────────────────────────────────
+session_now = get_tw_session()
+session_colours = {
+    "交易中": "badge-up", "盤前": "badge-gold", "盤後": "badge-blue", "休市": "badge-flat"
+}
+
+st.markdown(f"""
+<div class="tw-header">
+  <div class="tw-logo">台股<span>戰情中心</span></div>
+  <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+    <span class="badge {session_colours.get(session_now,'badge-flat')}">{session_now}</span>
+    <span class="badge badge-flat" style="font-family:'JetBrains Mono'">{datetime.now().strftime('%m/%d %H:%M')}</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Portfolio-level metrics
+# ─────────────────────────────────────────────────────────────────────────────
+portfolio = st.session_state.df_portfolio
+total_mv = total_cost = 0.0
+if not portfolio.empty:
+    for _, r in portfolio.iterrows():
+        m = MARKET_MAP.get(r["Symbol"])
+        if m:
+            total_mv   += m["現價"] * r["Shares"]
+            total_cost += r["Cost"] * r["Shares"]
+
+total_pl     = total_mv - total_cost
+pl_pct       = (total_pl / total_cost * 100) if total_cost > 0 else 0
+holding_cnt  = len(portfolio)
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("持倉市值", f"${total_mv:,.0f}")
+c2.metric("未實現損益", f"${total_pl:,.0f}", f"{pl_pct:+.2f}%")
+c3.metric("投入成本", f"${total_cost:,.0f}")
+c4.metric("持倉檔數", f"{holding_cnt} 檔")
+
+st.markdown("<hr class='qdiv'>", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main tabs
+# ─────────────────────────────────────────────────────────────────────────────
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 庫存動態", "💰 潛力快篩", "🔍 個股診斷", "📝 庫存管理", "⚙️ 系統"
+])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 1 — Portfolio Monitor
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab1:
+    if portfolio.empty:
+        st.info("📭 庫存為空。請至「庫存管理」新增持股。")
+    else:
         details = []
         for _, r in portfolio.iterrows():
-            m_data = MARKET_MAP.get(r['Symbol'])
-            if m_data:
-                curr_p = m_data['現價']
-                mv = curr_p * r['Shares']
-                cv = r['Cost'] * r['Shares']
-                total_mv += mv
-                total_cost += cv
-                
-                h_df = fetch_stock_history(r['Symbol'])
-                if h_df is not None:
-                    strat = get_strategy_suggestion(h_df, held_shares=r['Shares'])
-                    details.append({'r': r, 'm': m_data, 'cp': curr_p, 'strat': strat, 'df': h_df})
-                else:
-                    # 避免 API 掛掉時整頁崩潰
-                    strat_err = {"action": "WATCH", "name": "連線失敗", "color": "#9e9e9e", "html": "無法取得歷史價格", "tp": None, "sl": None, "suggest_qty": 0}
-                    details.append({'r': r, 'm': m_data, 'cp': curr_p, 'strat': strat_err, 'df': None})
+            m = MARKET_MAP.get(r["Symbol"])
+            if not m:
+                continue
+            cp = m["現價"]
+            mv = cp * r["Shares"]
+            cv = r["Cost"] * r["Shares"]
+            h_df = fetch_stock_history(r["Symbol"])
+            strat = get_strategy(h_df, r["Shares"], r["Cost"]) if h_df is not None else _default_strat("連線失敗", "#5A6072")
+            details.append({"r": r, "m": m, "cp": cp, "mv": mv, "cv": cv,
+                             "strat": strat, "df": h_df})
 
-        diff = total_mv - total_cost
-        p_ratio = (diff / total_cost * 100) if total_cost > 0 else 0
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("總市值 (TWD)", f"${total_mv:,.0f}")
-        m2.metric("未實現損益", f"${diff:,.0f}", f"{p_ratio:.2f}%")
-        m3.metric("總投入成本", f"${total_cost:,.0f}")
-        
-        st.divider()
+        # Sort: exits first, then by score desc
+        details.sort(key=lambda x: (0 if "SELL" in x["strat"]["action"] else 1, -x["strat"]["score"]))
 
-        cols = st.columns(1 if mobile_mode else 3)
-        for i, item in enumerate(details):
-            r, m, cp, strat = item['r'], item['m'], item['cp'], item['strat']
-            p_pct = (cp - r['Cost']) / r['Cost'] * 100 if r['Cost'] > 0 else 0
-            diff_val = (cp - r['Cost']) * r['Shares']
-            
-            # 強制數值格式化與防空值
-            tp_str = f"${strat['tp']:.2f}" if strat.get('tp') is not None else "-"
-            sl_str = f"${strat['sl']:.2f}" if strat.get('sl') is not None else "-"
-            
-            if strat['action'] == "BUY":
-                action_html = f"<div class='action-box'>🛒 <b>策略建議：</b><span class='profit-up'>建議加碼 {strat['suggest_qty']} 張 (停損設 {sl_str})</span><br>{strat['html']}</div>"
-            elif strat['action'] == "SELL":
-                action_html = f"<div class='action-box'>📉 <b>策略建議：</b><span class='profit-down'>建議減碼 {strat['suggest_qty']} 張 (獲利入袋/停損)</span><br>{strat['html']}</div>"
-            elif strat['action'] == "HOLD":
-                action_html = f"<div class='action-box'>🛡️ <b>策略建議：</b><span style='color:#f57c00;'>持股續抱，跌破 {sl_str} 出場。</span><br>{strat['html']}</div>"
+        # Pie chart
+        with st.expander("資產配置圓餅圖", expanded=False):
+            pie_labels  = [d["r"]["Name"] for d in details]
+            pie_values  = [d["mv"] for d in details]
+            pie_colours = ["#E8192C", "#F5A623", "#3D8EFF", "#9B6DFF", "#00B050",
+                           "#FF8C42", "#00D4FF", "#FF6B9D"][:len(details)]
+            pie_fig = go.Figure(go.Pie(
+                labels=pie_labels, values=pie_values, hole=0.55,
+                marker=dict(colors=pie_colours, line=dict(color="#0A0C12", width=2)),
+                textfont=dict(family="Noto Sans TC", size=11),
+            ))
+            pie_fig.update_layout(
+                template="plotly_dark", height=240, margin=dict(l=0, r=0, t=5, b=0),
+                paper_bgcolor="rgba(0,0,0,0)", showlegend=False,
+            )
+            st.plotly_chart(pie_fig, use_container_width=True, config={"displayModeBar": False})
+
+        st.markdown('<div class="qsec">持倉明細 (依訊號優先排序)</div>', unsafe_allow_html=True)
+
+        for item in details:
+            r, m, cp, strat = item["r"], item["m"], item["cp"], item["strat"]
+            p_pct    = (cp - r["Cost"]) / r["Cost"] * 100 if r["Cost"] > 0 else 0
+            diff_val = (cp - r["Cost"]) * r["Shares"]
+            sl_str   = f"${strat['sl']:.2f}" if strat.get("sl") else "—"
+            tp_str   = f"${strat['tp']:.2f}" if strat.get("tp") else "—"
+            a = strat["action"]
+
+            # Action strip
+            if a in ("BUY", "BUY_WATCH"):
+                action_line = (f"<span class='sig-buy'>🛒 建議買入 {strat['suggest_lots']} 張"
+                               f"，停損 {sl_str}，目標 {tp_str}</span>")
+            elif a == "SELL_EXIT":
+                action_line = f"<span class='sig-sell'>⚠️ 跌破停損！建議出清 {strat['suggest_lots']} 張</span>"
+            elif a == "SELL_PARTIAL":
+                action_line = f"<span class='sig-hold'>💰 高檔過熱，建議減碼 {strat['suggest_lots']} 張獲利了結</span>"
+            elif a == "HOLD":
+                action_line = f"<span class='sig-hold'>🛡️ 持股續抱，跌破 {sl_str} 再出場</span>"
             else:
-                action_html = f"<div class='action-box'>👀 <b>策略建議：</b>觀望中，無明確動作。</div>"
+                action_line = "<span class='sig-watch'>☕ 觀望中，無明確動作</span>"
 
-            with cols[i % (1 if mobile_mode else 3)]:
+            kd_str = f"K{strat.get('score', 0):.0f}" if strat["action"] != "WATCH" else ""
+            vol_r = float(item["df"].iloc[-1].get("VOL_Ratio", 1.0)) if item["df"] is not None else 1.0
+
+            st.markdown(f"""
+<div class="sc">
+  <div class="sc-accent" style="background:{accent_colour(strat)}"></div>
+  <div class="sc-top">
+    <div>
+      <div class="sc-name">{r['Name']} <span class="sc-code">{r['Symbol']}</span></div>
+      <div style="margin-top:3px;font-size:0.7rem;color:var(--muted)">{m['產業']} · PE {m['PE']} · PB {m['PB']}</div>
+    </div>
+    <div style="text-align:right">
+      {signal_badge_html(strat)}
+      <div style="margin-top:4px;font-family:var(--mono);font-size:0.7rem;color:var(--muted)">分數 {strat['score']:.1f}/10</div>
+    </div>
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:baseline;">
+    <span class="sc-price" style="color:{pl_colour(diff_val)}">${cp:.2f}</span>
+    <span style="font-family:var(--mono);font-size:0.88rem;color:{pl_colour(p_pct)};font-weight:700">
+      {'▲' if p_pct > 0 else '▼' if p_pct < 0 else '—'}{abs(p_pct):.2f}%
+    </span>
+  </div>
+  <div style="font-family:var(--mono);font-size:0.75rem;color:var(--muted);margin:2px 0 6px">
+    損益 {'▲' if diff_val >= 0 else '▼'}${abs(diff_val):,.0f} | 成本 ${r['Cost']:.2f} | {r['Shares']:,.0f}股
+  </div>
+  {score_bar_html(strat['score'])}
+  <div class="sc-grid">
+    <div><span class="sc-kv-label">停損</span><br><span class="sc-kv-value" style="color:var(--down)">{sl_str}</span></div>
+    <div><span class="sc-kv-label">目標</span><br><span class="sc-kv-value" style="color:var(--up)">{tp_str}</span></div>
+    <div><span class="sc-kv-label">量比</span><br><span class="sc-kv-value" style="color:{'var(--up)' if vol_r>=1.5 else 'var(--muted)'}">{vol_r:.1f}x</span></div>
+    <div><span class="sc-kv-label">分析依據</span><br><span class="sc-kv-value" style="font-size:0.68rem">{'、'.join(strat['reasons'][:2]) if strat['reasons'] else '—'}</span></div>
+  </div>
+  <div class="sc-action">{action_line}</div>
+</div>
+""", unsafe_allow_html=True)
+
+            # Chart toggle
+            if item["df"] is not None:
+                if st.button(f"📊 技術圖表 {r['Symbol']}", key=f"chart_{r['Symbol']}", use_container_width=True):
+                    st.session_state.diag_plot = (item["df"], r["Name"], strat)
+                    st.rerun()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 2 — Smart Screener
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab2:
+    st.markdown('<div class="qsec">多因子篩選條件</div>', unsafe_allow_html=True)
+
+    f1, f2, f3 = st.columns(3)
+    pe_lim  = f1.number_input("PE 上限", value=18.0, step=1.0)
+    pb_lim  = f2.number_input("PB 上限", value=1.5, step=0.1)
+    min_score = f3.slider("最低技術分 (0-10)", 0.0, 10.0, 4.0, 0.5)
+
+    f4, f5 = st.columns(2)
+    sector_options = sorted(list(set(v["產業"] for v in MARKET_MAP.values() if v.get("產業"))))
+    sector_filter  = f4.multiselect("篩選產業 (空=全部)", options=sector_options)
+    max_price      = f5.number_input("股價上限 (TWD)", value=500.0, min_value=1.0, step=10.0)
+
+    if st.button("🔍 啟動大盤掃描", use_container_width=True):
+        with st.spinner("掃描台股中 … (FinMind → YFinance)"):
+            candidates = []
+            scan_pool = {
+                k: v for k, v in MARKET_MAP.items()
+                if 0 < v["PE"] <= pe_lim and 0 < v["PB"] <= pb_lim
+                and (v["現價"] or 0) <= max_price
+                and (not sector_filter or v["產業"] in sector_filter)
+            }
+
+            progress = st.progress(0)
+            for idx, (code, info) in enumerate(list(scan_pool.items())[:60]):
+                progress.progress((idx + 1) / max(len(scan_pool), 1))
+                h_df = fetch_stock_history(code)
+                if h_df is None:
+                    continue
+                strat = get_strategy(h_df)
+                if strat["score"] >= min_score:
+                    candidates.append({
+                        "代碼": code, "名稱": info["名稱"], "產業": info["產業"],
+                        "現價": info["現價"], "PE": info["PE"], "PB": info["PB"],
+                        "score": strat["score"], "action": strat["action"],
+                        "sl": strat["sl"], "tp": strat["tp"],
+                        "reasons": strat["reasons"], "strat": strat, "df": h_df,
+                    })
+            progress.empty()
+
+        candidates.sort(key=lambda x: -x["score"])
+        st.session_state.scan_results = candidates
+
+    res = st.session_state.scan_results
+    if res is not None:
+        buys  = [c for c in res if "BUY" in c["action"]]
+        holds = [c for c in res if c["action"] == "HOLD"]
+
+        st.markdown(f'<div class="qsec">🟥 買進機會 ({len(buys)} 檔)</div>', unsafe_allow_html=True)
+        for i, c in enumerate(buys[:20], 1):
+            reason_short = "、".join(c["reasons"][:3]) if c["reasons"] else "—"
+            st.markdown(f"""
+<div class="sk-card" style="border-color:rgba(232,25,44,0.3)">
+  <div class="sk-rank">{i}</div>
+  <div style="flex:1">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <div>
+        <div class="sk-ticker">{c['代碼']} {c['名稱']} <span style="font-size:0.65rem;color:var(--muted)">{c['產業']}</span></div>
+        <div class="sk-reason">{reason_short}</div>
+      </div>
+      <div style="text-align:right;min-width:80px">
+        <div class="sk-score">{c['score']:.1f}</div>
+        <div style="font-family:var(--mono);font-size:0.72rem;color:var(--muted)">PE {c['PE']:.1f} PB {c['PB']:.1f}</div>
+      </div>
+    </div>
+    {score_bar_html(c['score'])}
+  </div>
+</div>""", unsafe_allow_html=True)
+            if st.button(f"診斷 {c['代碼']}", key=f"sc_diag_{c['代碼']}", use_container_width=True):
+                st.session_state.diag_plot = (c["df"], c["名稱"], c["strat"])
+                st.rerun()
+
+        if holds:
+            st.markdown(f'<div class="qsec">🟡 續抱觀察 ({len(holds)} 檔)</div>', unsafe_allow_html=True)
+            for c in holds[:10]:
                 st.markdown(f"""
-                <div class="mobile-card">
-                    <div class="mobile-card-title">
-                        <span>{r['Name']} ({r['Symbol']})</span>
-                        <span class="group-tag">{m['產業']}</span>
-                    </div>
-                    <div class="mobile-card-text">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin:10px 0;">
-                            <span style="font-size:2rem; font-weight:800;">${cp:.2f}</span>
-                            <span style="font-size:1.2rem;">{format_color(p_pct)}%</span>
-                        </div>
-                        持有股數：<b>{r['Shares']:,.0f} 股</b> | 損益：<b>{format_color(diff_val)}</b><br>
-                        平均成本：${r['Cost']:.2f} | PE: {m['PE']} | PB: {m['PB']}<br>
-                        停損防守：<b>{sl_str}</b> | 停利目標：<b>{tp_str}</b>
-                    </div>
-                    {action_html}
-                </div>
-                """, unsafe_allow_html=True)
-                
-                if st.button(f"📊 看圖 {r['Symbol']}", key=f"btn_{r['Symbol']}", use_container_width=True):
-                    if item['df'] is not None: 
-                        st.session_state.current_plot = (item['df'], r['Name'], strat)
-                    else:
-                        st.warning("⚠️ 此標的目前 API 無法取得資料，無法繪圖。")
+<div class="sk-card">
+  <div class="sk-rank">＝</div>
+  <div style="flex:1">
+    <div class="sk-ticker">{c['代碼']} {c['名稱']}</div>
+    <div class="sk-reason">{'、'.join(c['reasons'][:2])}</div>
+    {score_bar_html(c['score'])}
+  </div>
+  <div class="sk-score" style="color:var(--gold)">{c['score']:.1f}</div>
+</div>""", unsafe_allow_html=True)
 
-elif st.session_state.menu == "screening":
-    st.markdown('<div class="function-title">💰 價值與動能潛力快篩</div>', unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([2, 2, 1])
-    pe_lim = c1.number_input("PE 本益比上限 (過濾昂貴股)", value=15.0)
-    pb_lim = c2.number_input("PB 淨值比上限 (過濾高估值)", value=1.2)
-    
-    if c3.button("啟動大盤掃描", use_container_width=True):
-        with st.spinner('掃描大盤中...'):
-            results = []
-            for k, v in MARKET_MAP.items():
-                if 0 < v['PE'] <= pe_lim and 0 < v['PB'] <= pb_lim:
-                    results.append({'代碼': k, '名稱': v['名稱'], '產業': v['產業'], '現價': v['現價'], 'PE': v['PE'], 'PB': v['PB']})
-            df_res = pd.DataFrame(results)
-            if not df_res.empty:
-                df_res = df_res.sort_values(by=['產業', 'PE', 'PB'])
-                st.session_state.scan_results_df = df_res
-            else:
-                st.session_state.scan_results_df = pd.DataFrame()
+    elif res is None:
+        st.info("設定篩選條件後點擊「啟動大盤掃描」。")
+    else:
+        st.warning("無符合條件的標的，請放寬篩選參數。")
 
-    if 'scan_results_df' in st.session_state and not st.session_state.scan_results_df.empty:
-        df_display = st.session_state.scan_results_df
-        st.success(f"🎯 發現 {len(df_display)} 檔符合條件標的")
-        
-        sc_cols = st.columns(1 if mobile_mode else 3)
-        for i, (idx, row) in enumerate(df_display.head(30).iterrows()):
-            with sc_cols[i % (1 if mobile_mode else 3)]:
-                h_df = fetch_stock_history(row['代碼'])
-                if h_df is not None:
-                    strat = get_strategy_suggestion(h_df)
-                    tp_str = f"${strat['tp']:.2f}" if strat.get('tp') is not None else "-"
-                    sl_str = f"${strat['sl']:.2f}" if strat.get('sl') is not None else "-"
-                    
-                    st.markdown(f"""
-                    <div class="mobile-card">
-                        <div class="mobile-card-title">
-                            <span>{row['名稱']} ({row['代碼']})</span>
-                            <span class="group-tag">{row['產業']}</span>
-                        </div>
-                        <div class="mobile-card-text">
-                            現價: <b style="font-size:1.3rem;">${row['現價']}</b><br>
-                            PE: {row['PE']} | PB: {row['PB']}<br>
-                            停損: {sl_str} | 目標: {tp_str}
-                        </div>
-                        <div style="margin-top:10px; padding:6px; background:{strat['color']}22; border-radius:6px; border-left:4px solid {strat['color']}; font-weight:700; color:{strat['color']};">
-                            {strat['name']}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    if st.button(f"技術診斷 {row['代碼']}", key=f"sc_{row['代碼']}", use_container_width=True):
-                        st.session_state.current_plot = (h_df, row['名稱'], strat)
 
-elif st.session_state.menu == "diagnosis":
-    st.markdown('<div class="function-title">🔍 全市場技術分析診斷</div>', unsafe_allow_html=True)
-    selection = st.selectbox("搜尋台股標的", options=["請選擇..."] + STOCK_OPTIONS)
-    
-    # 核心修正：按鈕點擊後寫入 session_state 即會往下執行底部繪圖，不再呼叫 rerun 導致狀態洗掉
-    if st.button("執行深度診斷", use_container_width=True) and selection != "請選擇...":
-        code = selection.split(" ")[0]
-        name = selection.split(" ")[1]
-        with st.spinner("🚀 AI 技術指標運算中... (優先 FinMind，若失敗自動切換 YFinance)"):
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 3 — Diagnosis (single stock deep-dive)
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab3:
+    st.markdown('<div class="qsec">個股深度診斷</div>', unsafe_allow_html=True)
+
+    selection = st.selectbox("搜尋台股標的", options=["請選擇..."] + STOCK_OPTIONS, label_visibility="collapsed")
+
+    if st.button("🚀 執行深度診斷", use_container_width=True) and selection != "請選擇...":
+        parts = selection.split(" ")
+        code, name = parts[0], parts[1] if len(parts) > 1 else parts[0]
+        with st.spinner(f"分析 {name}({code}) … FinMind → YFinance"):
             df = fetch_stock_history(code)
-            if df is not None: 
-                strat = get_strategy_suggestion(df)
-                st.session_state.current_plot = (df, name, strat)
+            if df is not None:
+                strat = get_strategy(df)
+                st.session_state.diag_plot = (df, name, strat)
             else:
-                st.error(f"❌ 取得 {name} ({code}) 歷史資料失敗！API 目前限流且備援線路無回應，請稍後再試。")
+                st.error(f"❌ 無法取得 {name}({code}) 資料，請稍後再試。")
 
-elif st.session_state.menu == "management":
-    st.markdown('<div class="function-title">📝 雲端庫存清單管理系統</div>', unsafe_allow_html=True)
-    
-    with st.expander("➕ 新增交易紀錄", expanded=True):
+    # Chart panel (shared with Tab1 and Tab2 buttons)
+    if st.session_state.diag_plot is not None or (st.session_state.menu if "menu" in st.session_state else "") == "diagnosis":
+        pass
+
+# Global chart render — displayed in Tab3 when diag_plot is set
+with tab3:
+    plot_data = st.session_state.get("diag_plot")
+    if plot_data:
+        p_df, p_name, p_strat = plot_data
+
+        # Summary strip
+        last_row = p_df.iloc[-1]
+        k_val  = float(last_row["K"])
+        d_val  = float(last_row["D"])
+        rsi_v  = float(last_row["RSI"])
+        vol_r  = float(last_row.get("VOL_Ratio", 1.0))
+        sc     = p_strat["score"]
+        sc_col = "var(--up)" if sc >= 5 else "var(--gold)" if sc >= 3 else "var(--muted)"
+
+        st.markdown(f"""
+<div class="sc" style="margin-bottom:14px;">
+  <div class="sc-top">
+    <div>
+      <div class="sc-name">{p_name}</div>
+      <div style="margin-top:3px">{signal_badge_html(p_strat)}</div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-family:var(--mono);font-size:1.8rem;font-weight:700;color:{sc_col}">{sc:.1f}</div>
+      <div style="font-size:0.65rem;color:var(--muted)">/ 10 分</div>
+    </div>
+  </div>
+  {score_bar_html(sc)}
+</div>
+""", unsafe_allow_html=True)
+
+        k1, k2, k3, k4, k5, k6 = st.columns(6)
+        k1.metric("現價",     f"${p_df['Close'].iloc[-1]:.2f}")
+        k2.metric("RSI(14)",  f"{rsi_v:.1f}")
+        k3.metric("K / D",    f"{k_val:.0f} / {d_val:.0f}")
+        k4.metric("量比",      f"{vol_r:.1f}x")
+        k5.metric("停損防線", f"${p_strat['sl']:.2f}" if p_strat.get("sl") else "—")
+        k6.metric("目標價",   f"${p_strat['tp']:.2f}" if p_strat.get("tp") else "—")
+
+        st.markdown(f"""
+<div class="sc-action" style="border-left:3px solid {p_strat['color']};margin-bottom:12px">
+  {p_strat['html']}
+</div>
+""", unsafe_allow_html=True)
+
+        if p_strat.get("warnings"):
+            st.warning("⚠️ 風險注意：" + "；".join(p_strat["warnings"]))
+
+        fig = make_tw_chart(p_df, p_name, p_strat)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
+        if st.button("✖ 清除圖表", use_container_width=True):
+            st.session_state.diag_plot = None
+            st.rerun()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — Portfolio Management
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab4:
+    st.markdown('<div class="qsec">新增交易紀錄</div>', unsafe_allow_html=True)
+
+    with st.expander("➕ 新增持股", expanded=True):
         c1, c2, c3 = st.columns(3)
-        new_sel = c1.selectbox("搜尋標的", options=["請選擇..."] + STOCK_OPTIONS)
-        new_cost = c2.number_input("買入單價 (TWD)", min_value=0.0, step=0.1)
-        new_shares = c3.number_input("買入股數 (1張=1000)", min_value=1, step=1000, value=1000)
-        
-        if st.button("暫存至表格", use_container_width=True):
+        new_sel    = c1.selectbox("搜尋標的", options=["請選擇..."] + STOCK_OPTIONS, key="mgmt_sel")
+        new_cost   = c2.number_input("買入單價 (TWD)", min_value=0.01, step=0.1, key="mgmt_cost")
+        new_shares = c3.number_input("買入股數 (1張=1000)", min_value=1, step=1000, value=1000, key="mgmt_shares")
+
+        if st.button("＋ 暫存至庫存表", use_container_width=True):
             if new_sel != "請選擇...":
-                n_code, n_name = new_sel.split(" ")[0], new_sel.split(" ")[1]
-                new_data = {'Symbol': n_code, 'Name': n_name, 'Cost': new_cost, 'Shares': new_shares, 'Note': ''}
-                st.session_state.df_portfolio = pd.concat([st.session_state.df_portfolio, pd.DataFrame([new_data])], ignore_index=True)
-                st.success(f"✅ 已暫存 {n_name}。請記得點擊下方「儲存至 Google Sheets」！")
+                n_code = new_sel.split(" ")[0]
+                n_name = new_sel.split(" ")[1] if len(new_sel.split(" ")) > 1 else n_code
+                new_row = {"Symbol": n_code, "Name": n_name, "Cost": new_cost, "Shares": new_shares, "Note": ""}
+                st.session_state.df_portfolio = pd.concat(
+                    [st.session_state.df_portfolio, pd.DataFrame([new_row])], ignore_index=True
+                )
+                st.success(f"✅ 已暫存 {n_name}。請記得點擊「儲存至 Google Sheets」。")
             else:
                 st.warning("請先選擇標的。")
 
-    st.write("### 庫存列表編輯器")
-    edited_df = st.data_editor(st.session_state.df_portfolio, hide_index=True, use_container_width=True, key="portfolio_editor")
-    
-    if st.button("💾 儲存至 Google Sheets", use_container_width=True, type="primary"):
-        final_df = edited_df[edited_df['Shares'] > 0].copy()
-        with st.spinner('正在同步至雲端...'):
+    st.markdown('<div class="qsec">庫存清單編輯器</div>', unsafe_allow_html=True)
+    edited_df = st.data_editor(
+        st.session_state.df_portfolio, hide_index=True, use_container_width=True, key="portfolio_editor"
+    )
+
+    c_save, c_reload = st.columns(2)
+    if c_save.button("💾 儲存至 Google Sheets", use_container_width=True, type="primary"):
+        final_df = edited_df[edited_df["Shares"] > 0].copy()
+        with st.spinner("同步至雲端 …"):
             try:
                 gc = get_gsheet_client()
-                sh = gc.open(PORTFOLIO_SHEET_TITLE).sheet1
-                sh.clear()
-                sh.update('A1', [final_df.columns.tolist()] + final_df.values.tolist())
+                ws = gc.open(PORTFOLIO_SHEET_TITLE).sheet1
+                ws.clear()
+                ws.update("A1", [final_df.columns.tolist()] + final_df.values.tolist())
                 st.session_state.df_portfolio = final_df
                 st.cache_data.clear()
-                st.success("🎉 資料同步成功！")
-                time.sleep(1)
+                st.success("🎉 同步成功！")
+                time.sleep(0.8)
                 st.rerun()
             except Exception as e:
-                st.error(f"❌ 寫入失敗，請檢查權限或 API 配額: {e}")
+                st.error(f"❌ 寫入失敗：{e}")
 
-# --- 3. 底部圖表渲染區 (全域解耦，確保任何分頁與按鈕皆可穩定觸發) ---
-if st.session_state.current_plot is not None:
-    st.divider()
-    p_df, p_name, strat = st.session_state.current_plot
-    
-    st.markdown(f"### 💡 AI 策略解析：{p_name}")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("參考現價", f"${p_df['Close'].iloc[-1]:.2f}")
-    
-    # 這裡的防護是確保圖表區也能正常格式化 TP/SL
-    tp_val = f"${strat['tp']:.2f}" if strat.get('tp') is not None else "-"
-    sl_val = f"${strat['sl']:.2f}" if strat.get('sl') is not None else "-"
-    
-    c2.metric("ATR 停損防守", sl_val)
-    c3.metric("ATR 停利目標", tp_val)
-    
-    st.markdown(f"<div class='action-box'>{strat['html']}</div>", unsafe_allow_html=True)
-    
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.5, 0.2, 0.3],
-                        subplot_titles=("股價 K 線與布林通道", "RSI 強弱指標", "MACD 動能"))
-    
-    fig.add_trace(go.Candlestick(
-        x=p_df.index, open=p_df['Open'], high=p_df['High'], low=p_df['Low'], close=p_df['Close'], 
-        name='K線', increasing_line_color='#eb093b', decreasing_line_color='#00a651'
-    ), row=1, col=1)
-    
-    fig.add_trace(go.Scatter(x=p_df.index, y=p_df['SMA20'], line=dict(color='#ff9800', width=1.5), name='20MA'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=p_df.index, y=p_df['BB_Upper'], line=dict(color='rgba(100,100,100,0.3)', dash='dot'), name='BB上軌'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=p_df.index, y=p_df['BB_Lower'], fill='tonexty', fillcolor='rgba(23,190,207,0.05)', line=dict(color='rgba(100,100,100,0.3)', dash='dot'), name='BB下軌'), row=1, col=1)
-    
-    if strat.get('sl'): 
-        fig.add_hline(y=strat['sl'], line_dash="dash", line_color="#00a651", row=1, col=1, annotation_text="停損")
-    if strat.get('tp'): 
-        fig.add_hline(y=strat['tp'], line_dash="dash", line_color="#eb093b", row=1, col=1, annotation_text="停利")
+    if c_reload.button("🔄 重新載入庫存", use_container_width=True):
+        st.cache_data.clear()
+        st.session_state.df_portfolio = load_portfolio()
+        st.rerun()
 
-    fig.add_trace(go.Scatter(x=p_df.index, y=p_df['RSI'], line=dict(color='#9c27b0'), name='RSI(14)'), row=2, col=1)
-    fig.add_hline(y=75, line_dash="dash", line_color="#eb093b", row=2, col=1)
-    fig.add_hline(y=25, line_dash="dash", line_color="#00a651", row=2, col=1)
-    
-    fig.add_trace(go.Scatter(x=p_df.index, y=p_df['MACD'], line=dict(color='#1976d2'), name='DIF'), row=3, col=1)
-    fig.add_trace(go.Scatter(x=p_df.index, y=p_df['Signal'], line=dict(color='#ff9800'), name='MACD'), row=3, col=1)
-    
-    bar_colors = ['#eb093b' if val >= 0 else '#00a651' for val in p_df['Hist']]
-    fig.add_trace(go.Bar(x=p_df.index, y=p_df['Hist'], marker_color=bar_colors, name='OSC'), row=3, col=1)
-    
-    fig.update_layout(height=650 if mobile_mode else 850, xaxis_rangeslider_visible=False, template="plotly_white", margin=dict(l=10, r=10, t=30, b=10))
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — System & Settings
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab5:
+    st.markdown('<div class="qsec">系統控制</div>', unsafe_allow_html=True)
+
+    col_a, col_b = st.columns(2)
+    if col_a.button("🔄 強制刷新全部快取", use_container_width=True):
+        st.cache_data.clear()
+        st.session_state.scan_results = None
+        st.session_state.diag_plot    = None
+        st.rerun()
+
+    if col_b.button("🗑️ 清除診斷圖表", use_container_width=True):
+        st.session_state.diag_plot = None
+        st.rerun()
+
+    st.markdown('<div class="qsec">策略說明</div>', unsafe_allow_html=True)
+    st.markdown("""
+<div class="sc" style="font-size:0.82rem;line-height:1.8">
+  <div style="font-weight:900;margin-bottom:8px;font-family:var(--sans)">多因子評分系統 (0–10 分)</div>
+  <table width="100%" cellpadding="4">
+    <tr><td style="color:var(--muted);width:40%">均線多頭 (MA5/20/60)</td><td>最高 +2.5</td></tr>
+    <tr><td style="color:var(--muted)">年線 SMA240</td><td>±1.0</td></tr>
+    <tr><td style="color:var(--muted)">KD 低檔黃金交叉</td><td>最高 +2.5</td></tr>
+    <tr><td style="color:var(--muted)">RSI 超賣翻揚</td><td>最高 +1.5</td></tr>
+    <tr><td style="color:var(--muted)">BB 壓縮放量突破</td><td>+2.5</td></tr>
+    <tr><td style="color:var(--muted)">成交量比 ≥2x</td><td>+1.0</td></tr>
+    <tr><td style="color:var(--muted)">MACD 翻多</td><td>+0.5</td></tr>
+    <tr><td style="color:var(--muted)">接近年高</td><td>+0.5</td></tr>
+  </table>
+  <div style="margin-top:10px;color:var(--muted);font-size:0.75rem">
+    ⚠️ 本系統僅供輔助參考，不構成投資建議。台股停損以 2×ATR 或季線-2% 為基準。
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    st.markdown('<div class="qsec">資料來源狀態</div>', unsafe_allow_html=True)
+    sa, sb = st.columns(2)
+    sa.metric("市場報價標的數", len(MARKET_MAP))
+    sb.metric("持倉檔數", len(portfolio))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Footer
+# ─────────────────────────────────────────────────────────────────────────────
+st.markdown(f"""
+<div style="text-align:center;padding:20px 0 6px;font-size:0.62rem;color:var(--muted);font-family:'JetBrains Mono'">
+  台股戰情中心 V15 Pro · {datetime.now().strftime('%Y/%m/%d %H:%M')} · 紅漲綠跌 · 僅供參考勿作投資依據
+</div>
+""", unsafe_allow_html=True)
