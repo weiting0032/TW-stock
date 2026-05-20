@@ -48,6 +48,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- Initialize Session States ---
+if 'menu' not in st.session_state:
+    st.session_state.menu = "portfolio"
+if 'current_plot' not in st.session_state:
+    st.session_state.current_plot = None
+
 # --- 1. 核心數據處理 ---
 def get_gsheet_client():
     credentials = st.secrets["gcp_service_account"]
@@ -209,16 +215,20 @@ def format_color(val):
 with st.sidebar:
     st.title("🛡️ 戰情控制台")
     mobile_mode = st.toggle("📱 手機卡片模式", value=True)
-    if 'menu' not in st.session_state: st.session_state.menu = "portfolio"
     
     st.markdown("---")
-    if st.button("🚀 庫存動態", use_container_width=True): st.session_state.menu = "portfolio"
-    if st.button("💰 潛力快篩", use_container_width=True): st.session_state.menu = "screening"
-    if st.button("🔍 個股診斷", use_container_width=True): st.session_state.menu = "diagnosis"
-    if st.button("📝 庫存管理", use_container_width=True): st.session_state.menu = "management"
+    if st.button("🚀 庫存動態", use_container_width=True): 
+        st.session_state.menu = "portfolio"
+    if st.button("💰 潛力快篩", use_container_width=True): 
+        st.session_state.menu = "screening"
+    if st.button("🔍 個股診斷", use_container_width=True): 
+        st.session_state.menu = "diagnosis"
+    if st.button("📝 庫存管理", use_container_width=True): 
+        st.session_state.menu = "management"
     
     if st.button("🔄 強制刷新資料", use_container_width=True):
         st.cache_data.clear()
+        st.session_state.current_plot = None
         st.rerun()
 
 # 載入庫存
@@ -263,17 +273,17 @@ if st.session_state.menu == "portfolio":
             p_pct = (cp - r['Cost']) / r['Cost'] * 100 if r['Cost'] > 0 else 0
             diff_val = (cp - r['Cost']) * r['Shares']
             
-            # 安全解析 TP/SL 並嚴格限制小數點 2 位
-            tp_str = f"${strat['tp']:.2f}" if strat['tp'] else "-"
-            sl_str = f"${strat['sl']:.2f}" if strat['sl'] else "-"
+            # 核心修正點：確保卡片渲染時，精準抓取 strat 中的停損停利數值
+            tp_str = f"${strat['tp']:.2f}" if strat.get('tp') else "-"
+            sl_str = f"${strat['sl']:.2f}" if strat.get('sl') else "-"
             
             # 生成操作建議
             if strat['action'] == "BUY":
-                action_html = f"<div class='action-box'>🛒 <b>策略建議：</b><span class='profit-up'>建議加碼 {strat['suggest_qty']} 張 (停損設 ${strat['sl']:.2f})</span><br>{strat['html']}</div>"
+                action_html = f"<div class='action-box'>🛒 <b>策略建議：</b><span class='profit-up'>建議加碼 {strat['suggest_qty']} 張 (停損設 {sl_str})</span><br>{strat['html']}</div>"
             elif strat['action'] == "SELL":
                 action_html = f"<div class='action-box'>📉 <b>策略建議：</b><span class='profit-down'>建議減碼 {strat['suggest_qty']} 張 (獲利入袋/停損)</span><br>{strat['html']}</div>"
             elif strat['action'] == "HOLD":
-                action_html = f"<div class='action-box'>🛡️ <b>策略建議：</b><span style='color:#f57c00;'>持股續抱，跌破 ${strat['sl']:.2f} 出場。</span><br>{strat['html']}</div>"
+                action_html = f"<div class='action-box'>🛡️ <b>策略建議：</b><span style='color:#f57c00;'>持股續抱，跌破 {sl_str} 出場。</span><br>{strat['html']}</div>"
             else:
                 action_html = f"<div class='action-box'>👀 <b>策略建議：</b>觀望中，無明確動作。</div>"
 
@@ -298,7 +308,8 @@ if st.session_state.menu == "portfolio":
                 """, unsafe_allow_html=True)
                 
                 if st.button(f"📊 看圖 {r['Symbol']}", key=f"btn_{r['Symbol']}", use_container_width=True):
-                    if item['df'] is not None: st.session_state.current_plot = (item['df'], r['Name'], strat)
+                    if item['df'] is not None: 
+                        st.session_state.current_plot = (item['df'], r['Name'], strat)
 
 elif st.session_state.menu == "screening":
     st.markdown('<div class="function-title">💰 價值與動能潛力快篩</div>', unsafe_allow_html=True)
@@ -329,8 +340,8 @@ elif st.session_state.menu == "screening":
                 h_df = fetch_finmind_history(row['代碼'])
                 strat = get_strategy_suggestion(h_df)
                 
-                tp_str = f"${strat['tp']:.2f}" if strat['tp'] else "-"
-                sl_str = f"${strat['sl']:.2f}" if strat['sl'] else "-"
+                tp_str = f"${strat['tp']:.2f}" if strat.get('tp') else "-"
+                sl_str = f"${strat['sl']:.2f}" if strat.get('sl') else "-"
                 
                 st.markdown(f"""
                 <div class="mobile-card">
@@ -349,18 +360,23 @@ elif st.session_state.menu == "screening":
                 </div>
                 """, unsafe_allow_html=True)
                 if st.button(f"技術診斷 {row['代碼']}", key=f"sc_{row['代碼']}", use_container_width=True):
-                    if h_df is not None: st.session_state.current_plot = (h_df, row['名稱'], strat)
+                    if h_df is not None: 
+                        st.session_state.current_plot = (h_df, row['名稱'], strat)
 
 elif st.session_state.menu == "diagnosis":
     st.markdown('<div class="function-title">🔍 全市場技術分析診斷</div>', unsafe_allow_html=True)
     selection = st.selectbox("搜尋台股標的", options=["請選擇..."] + STOCK_OPTIONS)
+    
+    # 核心修正點：點擊深度診斷時，確保數據寫入 session_state 後能保留狀態
     if st.button("執行深度診斷", use_container_width=True) and selection != "請選擇...":
-        code, name = selection.split(" ")[0], selection.split(" ")[1]
-        with st.spinner("AI 運算中..."):
+        code = selection.split(" ")[0]
+        name = selection.split(" ")[1]
+        with st.spinner("AI 技術指標運算中..."):
             df = fetch_finmind_history(code)
             if df is not None: 
                 strat = get_strategy_suggestion(df)
                 st.session_state.current_plot = (df, name, strat)
+                st.rerun() # 強制刷新以在下方即時繪製圖表與分析結果
 
 elif st.session_state.menu == "management":
     st.markdown('<div class="function-title">📝 雲端庫存清單管理系統</div>', unsafe_allow_html=True)
@@ -399,16 +415,21 @@ elif st.session_state.menu == "management":
             except Exception as e:
                 st.error(f"❌ 寫入失敗，請檢查權限或 API 配額: {e}")
 
-# --- 底部圖表 (台股紅漲綠跌修正) ---
-if 'current_plot' in st.session_state:
+# --- 3. 底部圖表渲染區 (全域解耦，確保任何分頁與按鈕皆可穩定觸發) ---
+if st.session_state.current_plot is not None:
     st.divider()
     p_df, p_name, strat = st.session_state.current_plot
     
     st.markdown(f"### 💡 AI 策略解析：{p_name}")
     c1, c2, c3 = st.columns(3)
     c1.metric("參考現價", f"${p_df['Close'].iloc[-1]:.2f}")
-    c2.metric("ATR 停損防守", f"${strat['sl']:.2f}" if strat['sl'] else "-")
-    c3.metric("ATR 停利目標", f"${strat['tp']:.2f}" if strat['tp'] else "-")
+    
+    # 核心修正點：確保全域解耦繪圖區精準讀取對應的 strat
+    tp_val = f"${strat['tp']:.2f}" if strat.get('tp') else "-"
+    sl_val = f"${strat['sl']:.2f}" if strat.get('sl') else "-"
+    
+    c2.metric("ATR 停損防守", sl_val)
+    c3.metric("ATR 停利目標", tp_val)
     
     st.markdown(f"<div class='action-box'>{strat['html']}</div>", unsafe_allow_html=True)
     
@@ -425,8 +446,10 @@ if 'current_plot' in st.session_state:
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['BB_Upper'], line=dict(color='rgba(100,100,100,0.3)', dash='dot'), name='BB上軌'), row=1, col=1)
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['BB_Lower'], fill='tonexty', fillcolor='rgba(23,190,207,0.05)', line=dict(color='rgba(100,100,100,0.3)', dash='dot'), name='BB下軌'), row=1, col=1)
     
-    if strat['sl']: fig.add_hline(y=strat['sl'], line_dash="dash", line_color="#00a651", row=1, col=1, annotation_text="停損")
-    if strat['tp']: fig.add_hline(y=strat['tp'], line_dash="dash", line_color="#eb093b", row=1, col=1, annotation_text="停利")
+    if strat.get('sl'): 
+        fig.add_hline(y=strat['sl'], line_dash="dash", line_color="#00a651", row=1, col=1, annotation_text="停損")
+    if strat.get('tp'): 
+        fig.add_hline(y=strat['tp'], line_dash="dash", line_color="#eb093b", row=1, col=1, annotation_text="停利")
 
     fig.add_trace(go.Scatter(x=p_df.index, y=p_df['RSI'], line=dict(color='#9c27b0'), name='RSI(14)'), row=2, col=1)
     fig.add_hline(y=75, line_dash="dash", line_color="#eb093b", row=2, col=1)
