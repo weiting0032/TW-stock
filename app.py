@@ -950,47 +950,76 @@ with tab2:
 
     # ── 即時顯示通過基本面篩選的數量 ─────────────────────────────────────
     _pool_preview = _build_scan_pool(MARKET_MAP, pe_lim, pb_lim, max_price, sector_filter)
+    pool_n = len(_pool_preview)
+    est_min_lo = max(1, pool_n // 10 // 60)       # 10 workers, ~0.6s/stock
+    est_min_hi = max(1, pool_n * 6 // 10 // 60)   # pessimistic 6s/stock
     st.caption(
         f"📋 通過基本面條件（PE≤{pe_lim}、PB≤{pb_lim}、股價≤{max_price}、"
         f"{'產業：' + '、'.join(sector_filter) if sector_filter else '全產業'}）："
-        f" **{len(_pool_preview)} 檔**，將依技術分 ≥ {min_score:.1f} 進一步篩選。"
+        f" **{pool_n} 檔** 將接受技術分析，預估掃描時間 "
+        f"**{est_min_lo}–{est_min_hi} 分鐘**（平行 10 worker）。"
     )
 
+    sa, sb = st.columns(2)
+    scan_all   = sa.checkbox("✅ 全部掃描（不限上限）", value=False)
+    scan_cap   = sb.number_input(
+        "或設定上限 (掃描前 N 檔)",
+        min_value=50, max_value=2000, value=200, step=50,
+        disabled=scan_all,
+    )
+    max_workers_ui = st.slider("平行抓取 Worker 數（越多越快，但較易觸發 API 限流）", 3, 20, 10)
+
     if st.button("🔍 啟動大盤掃描", use_container_width=True):
-        with st.spinner("掃描台股中 … (FinMind → YFinance)"):
-            candidates = []
-            scan_list  = list(_pool_preview.items())[:100]   # 上限提高到 100 檔
-            total_scan = max(len(scan_list), 1)
-            progress   = st.progress(0)
-            prog_text  = st.empty()
+        import concurrent.futures
 
-            for idx, (code, info) in enumerate(scan_list):
-                progress.progress((idx + 1) / total_scan)
-                prog_text.caption(f"掃描中 {idx+1}/{total_scan}：{code} {info.get('名稱', '')}")
+        scan_list  = list(_pool_preview.items()) if scan_all else list(_pool_preview.items())[:int(scan_cap)]
+        total_scan = len(scan_list)
+        candidates = []
 
-                h_df = fetch_stock_history(code)
-                if h_df is None:
-                    continue
-                strat = get_strategy(h_df)
-                if strat["score"] >= min_score:
-                    candidates.append({
-                        "代碼":    code,
-                        "名稱":    info.get("名稱", ""),
-                        "產業":    info.get("產業", ""),
-                        "現價":    _sf(info.get("現價"), 0.0),
-                        "PE":      round(_sf(info.get("PE"), 0.0), 1),
-                        "PB":      round(_sf(info.get("PB"), 0.0), 2),
-                        "score":   strat["score"],
-                        "action":  strat["action"],
-                        "sl":      strat["sl"],
-                        "tp":      strat["tp"],
-                        "reasons": strat["reasons"],
-                        "strat":   strat,
-                        "df":      h_df,
-                    })
+        progress  = st.progress(0)
+        prog_text = st.empty()
+        done_count = [0]          # mutable counter for thread-safe increment
 
-            progress.empty()
-            prog_text.empty()
+        def _scan_one(args):
+            code, info = args
+            h_df = fetch_stock_history(code)
+            if h_df is None:
+                return None
+            strat = get_strategy(h_df)
+            if strat["score"] < min_score:
+                return None
+            return {
+                "代碼":    code,
+                "名稱":    info.get("名稱", ""),
+                "產業":    info.get("產業", ""),
+                "現價":    _sf(info.get("現價"), 0.0),
+                "PE":      round(_sf(info.get("PE"), 0.0), 1),
+                "PB":      round(_sf(info.get("PB"), 0.0), 2),
+                "score":   strat["score"],
+                "action":  strat["action"],
+                "sl":      strat["sl"],
+                "tp":      strat["tp"],
+                "reasons": strat["reasons"],
+                "strat":   strat,
+                "df":      h_df,
+            }
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers_ui) as executor:
+            futures = {executor.submit(_scan_one, item): item[0] for item in scan_list}
+            for fut in concurrent.futures.as_completed(futures):
+                done_count[0] += 1
+                pct = done_count[0] / max(total_scan, 1)
+                progress.progress(pct)
+                prog_text.caption(
+                    f"掃描進度 {done_count[0]}/{total_scan} "
+                    f"({pct*100:.0f}%) — 已發現 {len(candidates)} 個符合標的"
+                )
+                result = fut.result()
+                if result:
+                    candidates.append(result)
+
+        progress.empty()
+        prog_text.empty()
 
         candidates.sort(key=lambda x: -x["score"])
         st.session_state.scan_results    = candidates
