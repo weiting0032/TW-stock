@@ -679,6 +679,44 @@ def make_tw_chart(df: pd.DataFrame, name: str, strat: dict) -> go.Figure:
     return fig
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Screening helpers (module-level so they work outside button callbacks)
+# ─────────────────────────────────────────────────────────────────────────────
+def _sf(val, default=float("nan")) -> float:
+    """Safely cast any value to float; returns default on failure or NaN."""
+    try:
+        f = float(val)
+        return f if not pd.isna(f) else default
+    except Exception:
+        return default
+
+def _build_scan_pool(market_map: dict, pe_lim: float, pb_lim: float,
+                     max_price: float, sector_filter: list) -> dict:
+    """
+    Apply fundamental filters and return candidates as {code: info}.
+
+    Conditions (all must pass — NaN / zero / placeholder values are excluded):
+      1. 股價  > 0  AND  <= max_price
+      2. PE    > 0  AND  <= pe_lim      (虧損股 PE<0 排除；無效 999 排除)
+      3. PB    > 0  AND  <= pb_lim
+      4. 產業  in sector_filter          (sector_filter 為空 = 全通過)
+    """
+    pool = {}
+    for code, info in market_map.items():
+        price = _sf(info.get("現價"))
+        pe    = _sf(info.get("PE"))
+        pb    = _sf(info.get("PB"))
+        ind   = str(info.get("產業", ""))
+
+        if pd.isna(price) or price <= 0 or price > max_price:   continue
+        if pd.isna(pe)    or pe    <= 0 or pe    > pe_lim:      continue
+        if pd.isna(pb)    or pb    <= 0 or pb    > pb_lim:      continue
+        if sector_filter and ind not in sector_filter:           continue
+
+        pool[code] = info
+    return pool
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Session state init
 # ─────────────────────────────────────────────────────────────────────────────
@@ -692,6 +730,10 @@ if "tab1_chart_sym" not in st.session_state:
     st.session_state.tab1_chart_sym = ""
 if "tab1_chart_data" not in st.session_state:
     st.session_state.tab1_chart_data = None
+if "tab2_chart_sym" not in st.session_state:
+    st.session_state.tab2_chart_sym = ""
+if "tab2_chart_data" not in st.session_state:
+    st.session_state.tab2_chart_data = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -906,35 +948,54 @@ with tab2:
     sector_filter  = f4.multiselect("篩選產業 (空=全部)", options=sector_options)
     max_price      = f5.number_input("股價上限 (TWD)", value=500.0, min_value=1.0, step=10.0)
 
+    # ── 即時顯示通過基本面篩選的數量 ─────────────────────────────────────
+    _pool_preview = _build_scan_pool(MARKET_MAP, pe_lim, pb_lim, max_price, sector_filter)
+    st.caption(
+        f"📋 通過基本面條件（PE≤{pe_lim}、PB≤{pb_lim}、股價≤{max_price}、"
+        f"{'產業：' + '、'.join(sector_filter) if sector_filter else '全產業'}）："
+        f" **{len(_pool_preview)} 檔**，將依技術分 ≥ {min_score:.1f} 進一步篩選。"
+    )
+
     if st.button("🔍 啟動大盤掃描", use_container_width=True):
         with st.spinner("掃描台股中 … (FinMind → YFinance)"):
             candidates = []
-            scan_pool = {
-                k: v for k, v in MARKET_MAP.items()
-                if 0 < v["PE"] <= pe_lim and 0 < v["PB"] <= pb_lim
-                and (v["現價"] or 0) <= max_price
-                and (not sector_filter or v["產業"] in sector_filter)
-            }
+            scan_list  = list(_pool_preview.items())[:100]   # 上限提高到 100 檔
+            total_scan = max(len(scan_list), 1)
+            progress   = st.progress(0)
+            prog_text  = st.empty()
 
-            progress = st.progress(0)
-            for idx, (code, info) in enumerate(list(scan_pool.items())[:60]):
-                progress.progress((idx + 1) / max(len(scan_pool), 1))
+            for idx, (code, info) in enumerate(scan_list):
+                progress.progress((idx + 1) / total_scan)
+                prog_text.caption(f"掃描中 {idx+1}/{total_scan}：{code} {info.get('名稱', '')}")
+
                 h_df = fetch_stock_history(code)
                 if h_df is None:
                     continue
                 strat = get_strategy(h_df)
                 if strat["score"] >= min_score:
                     candidates.append({
-                        "代碼": code, "名稱": info["名稱"], "產業": info["產業"],
-                        "現價": info["現價"], "PE": info["PE"], "PB": info["PB"],
-                        "score": strat["score"], "action": strat["action"],
-                        "sl": strat["sl"], "tp": strat["tp"],
-                        "reasons": strat["reasons"], "strat": strat, "df": h_df,
+                        "代碼":    code,
+                        "名稱":    info.get("名稱", ""),
+                        "產業":    info.get("產業", ""),
+                        "現價":    _sf(info.get("現價"), 0.0),
+                        "PE":      round(_sf(info.get("PE"), 0.0), 1),
+                        "PB":      round(_sf(info.get("PB"), 0.0), 2),
+                        "score":   strat["score"],
+                        "action":  strat["action"],
+                        "sl":      strat["sl"],
+                        "tp":      strat["tp"],
+                        "reasons": strat["reasons"],
+                        "strat":   strat,
+                        "df":      h_df,
                     })
+
             progress.empty()
+            prog_text.empty()
 
         candidates.sort(key=lambda x: -x["score"])
-        st.session_state.scan_results = candidates
+        st.session_state.scan_results    = candidates
+        st.session_state.tab2_chart_sym  = ""
+        st.session_state.tab2_chart_data = None
 
     res = st.session_state.scan_results
     if res is not None:
@@ -961,9 +1022,38 @@ with tab2:
     {score_bar_html(c['score'])}
   </div>
 </div>""", unsafe_allow_html=True)
-            if st.button(f"診斷 {c['代碼']}", key=f"sc_diag_{c['代碼']}", use_container_width=True):
-                st.session_state.diag_plot = (c["df"], c["名稱"], c["strat"])
-                st.rerun()
+            if st.button(f"📊 診斷 {c['代碼']}", key=f"sc_diag_{c['代碼']}", use_container_width=True):
+                cur = st.session_state.get("tab2_chart_sym", "")
+                if cur == c["代碼"]:
+                    st.session_state.tab2_chart_sym  = ""
+                    st.session_state.tab2_chart_data = None
+                else:
+                    st.session_state.tab2_chart_sym  = c["代碼"]
+                    st.session_state.tab2_chart_data = (c["df"], c["名稱"], c["strat"])
+
+            # ── Inline chart for this candidate ────────────────────────────
+            if st.session_state.get("tab2_chart_sym") == c["代碼"]:
+                t2d = st.session_state.get("tab2_chart_data")
+                if t2d:
+                    t2_df, t2_name, t2_strat = t2d
+                    t2_last = t2_df.iloc[-1]
+                    ta, tb, tc, td = st.columns(4)
+                    ta.metric("現價",   f"${t2_df['Close'].iloc[-1]:.2f}")
+                    tb.metric("K / D",  f"{float(t2_last['K']):.0f} / {float(t2_last['D']):.0f}")
+                    tc.metric("RSI",    f"{float(t2_last['RSI']):.1f}")
+                    td.metric("量比",   f"{float(t2_last.get('VOL_Ratio', 1.0)):.1f}x")
+                    st.markdown(
+                        f'<div class="sc-action" style="border-left:3px solid {t2_strat["color"]};margin-bottom:10px">'
+                        f'{t2_strat["html"]}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    if t2_strat.get("warnings"):
+                        st.warning("⚠️ " + "；".join(t2_strat["warnings"]))
+                    st.plotly_chart(
+                        make_tw_chart(t2_df, t2_name, t2_strat),
+                        use_container_width=True,
+                        config={"displayModeBar": False, "scrollZoom": False},
+                    )
 
         if holds:
             st.markdown(f'<div class="qsec">🟡 續抱觀察 ({len(holds)} 檔)</div>', unsafe_allow_html=True)
