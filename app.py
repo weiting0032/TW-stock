@@ -21,6 +21,33 @@ from plotly.subplots import make_subplots
 # ─────────────────────────────────────────────────────────────────────────────
 PORTFOLIO_SHEET_TITLE = "Streamlit TW Stock"
 
+# ── 半導體族群關鍵字（對應 Wespai 產業欄位模糊比對）─────────────────────────
+SEMI_KEYWORDS = [
+    "半導體", "積體電路", "IC設計", "ic設計",
+    "晶圓", "封裝", "測試", "記憶體", "DRAM", "Flash", "NAND",
+    "功率元件", "電源管理", "類比IC", "RF", "混合訊號",
+    "伺服器", "Server", "雲端", "AI", "GPU", "HBM", "CoWoS",
+    "基板", "導線框", "引線框", "散熱", "液冷", "ABF",
+    "矽智財", "IP矽", "EDA", "化合物半導體", "碳化矽", "氮化鎵",
+    "被動元件", "電感", "MLCC", "連接器",
+]
+
+# ── 半導體族群合理估值門檻（含高成長 AI/伺服器股） ────────────────────────
+SEMI_PE_MAX    = 45.0    # 半導體本益比上限（IC設計成長股 PE 可達 40+）
+SEMI_PB_MAX    = 8.0     # 股價淨值比上限（台積電等級約 5–7）
+SEMI_SCORE_MIN = 5.0     # 強勢股技術分門檻（滿分10，≥5才是真正共振）
+SEMI_SCAN_MAX  = 500     # 半導體族群預估上限（確保全掃）
+
+# ── Telegram（從 Streamlit Secrets 讀取）────────────────────────────────────
+def _get_tg_creds():
+    try:
+        token   = st.secrets.get("TG_TOKEN", "")
+        chat_id = st.secrets.get("TG_CHAT_ID", "")
+        return str(token).strip(), str(chat_id).strip()
+    except Exception:
+        return "", ""
+
+
 st.set_page_config(
     page_title="台股戰情中心",
     page_icon="🔴",
@@ -717,6 +744,253 @@ def _build_scan_pool(market_map: dict, pe_lim: float, pb_lim: float,
         pool[code] = info
     return pool
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 半導體族群自動掃描 & Telegram 推播
+# ─────────────────────────────────────────────────────────────────────────────
+def is_semiconductor(industry: str) -> bool:
+    """判斷 Wespai 產業欄位是否屬於半導體族群（模糊比對）"""
+    ind = str(industry).strip()
+    return any(kw.lower() in ind.lower() for kw in SEMI_KEYWORDS)
+
+
+def is_tw_trading_day() -> bool:
+    """簡易判斷：今日是否為台股交易日（週一至週五；未納入國定假日）"""
+    import pytz
+    tw_now = datetime.now(pytz.timezone("Asia/Taipei"))
+    return tw_now.weekday() < 5      # 0=Mon … 4=Fri
+
+
+def get_auto_scan_worksheet():
+    try:
+        gc = get_gsheet_client()
+        sh = gc.open(PORTFOLIO_SHEET_TITLE)
+        try:
+            return sh.worksheet("AutoScan")
+        except Exception:
+            ws = sh.add_worksheet("AutoScan", rows=500, cols=6)
+            ws.append_row(["Date", "Status", "ScanCount", "HitCount", "SentAt", "Note"])
+            return ws
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_last_auto_scan_date() -> str:
+    """從 AutoScan 工作表讀取最後一次成功掃描的日期 (YYYY-MM-DD)"""
+    ws = get_auto_scan_worksheet()
+    if ws is None:
+        return ""
+    try:
+        rows = ws.get_all_values()
+        for row in reversed(rows[1:]):     # 跳過 header，從最新往回找
+            if len(row) >= 2 and row[1] == "OK":
+                return row[0]
+    except Exception:
+        pass
+    return ""
+
+
+def log_auto_scan_result(scan_count: int, hit_count: int, note: str = ""):
+    ws = get_auto_scan_worksheet()
+    if ws is None:
+        return
+    import pytz
+    today = datetime.now(pytz.timezone("Asia/Taipei")).strftime("%Y-%m-%d")
+    sent_at = datetime.now(pytz.timezone("Asia/Taipei")).strftime("%H:%M:%S")
+    try:
+        ws.append_row([today, "OK", scan_count, hit_count, sent_at, note])
+        get_last_auto_scan_date.clear()
+    except Exception:
+        pass
+
+
+def send_tg_message(text: str) -> bool:
+    """發送 Telegram 訊息，超過 4096 字自動分段"""
+    token, chat_id = _get_tg_creds()
+    if not token or not chat_id:
+        return False
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    MAX = 4096
+    chunks = [text[i:i+MAX] for i in range(0, len(text), MAX)]
+    ok = True
+    for chunk in chunks:
+        try:
+            r = requests.post(url, json={"chat_id": chat_id, "text": chunk,
+                                          "parse_mode": "Markdown"}, timeout=15)
+            if not r.json().get("ok"):
+                ok = False
+        except Exception:
+            ok = False
+    return ok
+
+
+def format_semi_tg_message(candidates: list, scan_count: int, hit_count: int,
+                             scan_date: str) -> str:
+    """將掃描結果格式化為 Telegram Markdown 訊息"""
+    lines = [
+        f"📊 *台股半導體族群 · 日收盤自動掃描*",
+        f"📅 {scan_date} 18:00 | 市場已收盤",
+        f"─────────────────────",
+        f"掃描：{scan_count} 檔　│　入選：{hit_count} 檔　│　門檻：技術分 ≥ {SEMI_SCORE_MIN}",
+        f"基本面：PE ≤ {SEMI_PE_MAX}、PB ≤ {SEMI_PB_MAX}",
+        f"─────────────────────",
+        "",
+    ]
+
+    if not candidates:
+        lines.append("⚠️ 本日無符合條件的強勢標的，建議觀望。")
+        sep = "\n"
+        return sep.join(lines)
+
+    # 訊號 emoji 對應
+    SIG_EMOJI = {
+        "BUY":          "🔴 強勢進場",
+        "BUY_WATCH":    "🟡 留意機會",
+        "HOLD":         "🟠 多頭續抱",
+        "SELL_PARTIAL": "🟢 高檔減碼",
+        "SELL_EXIT":    "🟢 停損出場",
+        "WATCH":        "⚪ 觀望",
+    }
+    RANK_EMOJI = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
+
+    for i, c in enumerate(candidates[:15]):          # 最多推播 15 檔
+        rank  = RANK_EMOJI[i] if i < len(RANK_EMOJI) else f"{i+1}."
+        strat = c["strat"]
+        sig   = SIG_EMOJI.get(c["action"], "⚪ 觀望")
+        stars = "⭐" * max(1, round(c["score"] / 2))
+        reasons_str = "、".join(c["reasons"][:3]) if c["reasons"] else "—"
+        sl_str = f"${c['sl']:.1f}" if c.get("sl") else "—"
+        tp_str = f"${c['tp']:.1f}" if c.get("tp") else "—"
+
+        block = [
+            f"{rank} *{c['代碼']} {c['名稱']}*  {stars}",
+            f"   {sig}  |  分數 *{c['score']:.1f}*/10",
+            f"   現價 ${c['現價']:.2f}  |  {c['產業']}",
+            f"   📈 {reasons_str}",
+            f"   🛑 停損 {sl_str}  |  🎯 目標 {tp_str}",
+            f"   PE {c['PE']}  |  PB {c['PB']}",
+            "",
+        ]
+        lines.extend(block)
+
+    if len(candidates) > 15:
+        lines.append(f"_… 另有 {len(candidates)-15} 檔符合條件，請至 App 查看完整清單_")
+
+    lines += [
+        "─────────────────────",
+        "⚠️ 本訊息僅供參考，不構成投資建議",
+    ]
+    sep = "\n"
+    return sep.join(lines)
+
+
+def run_semiconductor_scan(market_map: dict, status_placeholder=None) -> list:
+    """
+    掃描所有半導體族群標的，回傳依分數排序的候選清單。
+    使用 ThreadPoolExecutor 平行抓取歷史資料。
+    """
+    import concurrent.futures
+
+    # 1. 基本面 + 產業過濾（瞬間完成）
+    semi_pool = {
+        code: info for code, info in market_map.items()
+        if is_semiconductor(info.get("產業", ""))
+        and _sf(info.get("PE"), 999) > 0
+        and _sf(info.get("PE"), 999) <= SEMI_PE_MAX
+        and _sf(info.get("PB"), 999) > 0
+        and _sf(info.get("PB"), 999) <= SEMI_PB_MAX
+        and _sf(info.get("現價"), 0) > 0
+    }
+    scan_list  = list(semi_pool.items())[:SEMI_SCAN_MAX]
+    total_scan = max(len(scan_list), 1)
+    candidates = []
+    done_count = [0]
+
+    def _scan_one(args):
+        code, info = args
+        try:
+            h_df = fetch_stock_history(code)
+            if h_df is None:
+                return None
+            strat = get_strategy(h_df)
+            if strat["score"] < SEMI_SCORE_MIN:
+                return None
+            return {
+                "代碼":    code,
+                "名稱":    info.get("名稱", ""),
+                "產業":    info.get("產業", ""),
+                "現價":    _sf(info.get("現價"), 0.0),
+                "PE":      round(_sf(info.get("PE"), 0.0), 1),
+                "PB":      round(_sf(info.get("PB"), 0.0), 2),
+                "score":   strat["score"],
+                "action":  strat["action"],
+                "sl":      strat["sl"],
+                "tp":      strat["tp"],
+                "reasons": strat["reasons"],
+                "strat":   strat,
+                "df":      h_df,
+            }
+        except Exception:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+        futures = {executor.submit(_scan_one, item): item[0] for item in scan_list}
+        for fut in concurrent.futures.as_completed(futures):
+            done_count[0] += 1
+            if status_placeholder:
+                pct = done_count[0] / total_scan
+                status_placeholder.progress(
+                    pct,
+                    text=f"掃描 {done_count[0]}/{total_scan} ({pct*100:.0f}%) — "
+                         f"已發現 {len(candidates)} 個強勢標的",
+                )
+            result = fut.result()
+            if result:
+                candidates.append(result)
+
+    candidates.sort(key=lambda x: -x["score"])
+    return candidates, total_scan
+
+
+def check_and_trigger_auto_scan():
+    """
+    在頁面載入時呼叫：檢查是否該執行當日自動掃描。
+    條件：台股交易日 + 台灣時間 18:00–23:59 + 今日尚未掃描
+    """
+    import pytz
+    tw_now = datetime.now(pytz.timezone("Asia/Taipei"))
+    if not is_tw_trading_day():
+        return
+    if tw_now.hour < 18:
+        return
+
+    today_str = tw_now.strftime("%Y-%m-%d")
+    last_date  = get_last_auto_scan_date()
+    if last_date == today_str:
+        return                  # 今日已掃描，跳過
+
+    # 避免同一個 session 重複執行
+    if st.session_state.get("auto_scan_done_today") == today_str:
+        return
+
+    st.session_state.auto_scan_done_today = today_str
+
+    # ── 後台執行（避免阻塞 UI）─────────────────────────────────────────────
+    import threading
+    def _bg():
+        try:
+            candidates, scan_n = run_semiconductor_scan(MARKET_MAP)
+            hit_n    = len(candidates)
+            msg      = format_semi_tg_message(candidates, scan_n, hit_n, today_str)
+            ok       = send_tg_message(msg)
+            log_auto_scan_result(scan_n, hit_n, "auto" + ("_ok" if ok else "_tg_fail"))
+        except Exception as e:
+            log_auto_scan_result(0, 0, f"error:{e}")
+
+    threading.Thread(target=_bg, daemon=True).start()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Session state init
 # ─────────────────────────────────────────────────────────────────────────────
@@ -735,6 +1009,11 @@ if "tab2_chart_sym" not in st.session_state:
 if "tab2_chart_data" not in st.session_state:
     st.session_state.tab2_chart_data = None
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auto-scan trigger (每次頁面載入時靜默檢查是否需要執行當日掃描)
+# ─────────────────────────────────────────────────────────────────────────────
+check_and_trigger_auto_scan()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Header
@@ -1274,6 +1553,94 @@ with tab5:
     sa, sb = st.columns(2)
     sa.metric("市場報價標的數", len(MARKET_MAP))
     sb.metric("持倉檔數", len(portfolio))
+
+    # ── 半導體自動掃描控制台 ────────────────────────────────────────────────
+    st.markdown('<hr class="qdiv">', unsafe_allow_html=True)
+    st.markdown('<div class="qsec">🤖 半導體族群自動掃描推播</div>', unsafe_allow_html=True)
+
+    import pytz as _pytz
+    _tw_now   = datetime.now(_pytz.timezone("Asia/Taipei"))
+    _today_s  = _tw_now.strftime("%Y-%m-%d")
+    _last_s   = get_last_auto_scan_date()
+    _is_today = (_last_s == _today_s)
+    _is_tday  = is_tw_trading_day()
+    _after18  = _tw_now.hour >= 18
+
+    # Status cards
+    _semi_pool_n = sum(1 for v in MARKET_MAP.values() if is_semiconductor(v.get("產業", "")))
+    st.markdown(f"""
+<div class="sc" style="font-size:0.82rem;line-height:2.0;">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;">
+    <div><span class="sc-kv-label">半導體族群總數</span><br>
+         <span class="sc-kv-value">{_semi_pool_n} 檔</span></div>
+    <div><span class="sc-kv-label">估值門檻</span><br>
+         <span class="sc-kv-value">PE≤{SEMI_PE_MAX} PB≤{SEMI_PB_MAX}</span></div>
+    <div><span class="sc-kv-label">技術分門檻</span><br>
+         <span class="sc-kv-value">≥ {SEMI_SCORE_MIN}/10（強勢股）</span></div>
+    <div><span class="sc-kv-label">排程時間</span><br>
+         <span class="sc-kv-value">每交易日 18:00（台灣）</span></div>
+    <div><span class="sc-kv-label">今日狀態</span><br>
+         <span class="sc-kv-value" style="color:{'var(--down)' if _is_today else 'var(--muted)'}">
+           {'✅ 已發送 (' + _last_s + ')' if _is_today else '⏳ 尚未執行'}</span></div>
+    <div><span class="sc-kv-label">目前台灣時間</span><br>
+         <span class="sc-kv-value">{_tw_now.strftime('%H:%M')}
+           {'（交易日）' if _is_tday else '（非交易日）'}</span></div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    # 自動觸發說明
+    if _is_tday and _after18 and not _is_today:
+        st.info("⏱️ 自動掃描將在背景執行（頁面載入時已觸發），完成後 Telegram 將收到推播。")
+    elif not _is_tday:
+        st.caption("今日為非交易日，自動掃描不會觸發。")
+    elif not _after18:
+        st.caption(f"尚未到 18:00（目前 {_tw_now.strftime('%H:%M')}），收盤後自動掃描將在頁面載入時觸發。")
+
+    # 手動立即掃描
+    st.markdown('<div class="qsec">手動立即掃描</div>', unsafe_allow_html=True)
+    _m1, _m2 = st.columns(2)
+    _force    = _m1.checkbox("強制重新掃描（忽略今日已發送記錄）", value=False)
+    _dry_run  = _m2.checkbox("Dry Run（掃描但不發 TG）", value=False)
+
+    if st.button("🚀 立即執行半導體掃描推播", use_container_width=True):
+        if _is_today and not _force:
+            st.warning("今日已發送過推播。勾選「強制重新掃描」可重新執行。")
+        else:
+            _prog = st.progress(0, text="準備掃描半導體族群 …")
+            with st.spinner("平行掃描中（12 workers）…"):
+                _cands, _scan_n = run_semiconductor_scan(MARKET_MAP, _prog)
+            _prog.empty()
+            _hit_n = len(_cands)
+            st.success(f"掃描完成！共 {_scan_n} 檔半導體標的，{_hit_n} 檔達到技術門檻。")
+
+            _msg = format_semi_tg_message(_cands, _scan_n, _hit_n, _today_s)
+
+            # Preview
+            with st.expander("📨 Telegram 訊息預覽", expanded=True):
+                st.code(_msg, language=None)
+
+            if not _dry_run:
+                _ok = send_tg_message(_msg)
+                if _ok:
+                    log_auto_scan_result(_scan_n, _hit_n, "manual_ok")
+                    st.success("✅ Telegram 推播成功！")
+                else:
+                    st.error("❌ Telegram 推播失敗，請確認 TG_TOKEN / TG_CHAT_ID 是否正確設定於 Secrets。")
+            else:
+                st.info("Dry Run 模式：未實際發送 Telegram。")
+
+            # Show table
+            if _cands:
+                st.markdown('<div class="qsec">掃描結果（依分數排序）</div>', unsafe_allow_html=True)
+                _df_show = pd.DataFrame([{
+                    "代碼": c["代碼"], "名稱": c["名稱"], "產業": c["產業"],
+                    "現價": c["現價"], "PE": c["PE"], "PB": c["PB"],
+                    "技術分": c["score"], "訊號": c["action"],
+                    "停損": round(c["sl"], 2) if c.get("sl") else None,
+                    "目標": round(c["tp"], 2) if c.get("tp") else None,
+                } for c in _cands])
+                st.dataframe(_df_show, use_container_width=True, hide_index=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Footer
