@@ -22,21 +22,80 @@ from plotly.subplots import make_subplots
 PORTFOLIO_SHEET_TITLE = "Streamlit TW Stock"
 
 # ── 半導體族群關鍵字（對應 Wespai 產業欄位模糊比對）─────────────────────────
+# ── 半導體族群關鍵字 ────────────────────────────────────────────────────────
+#
+# 台灣半導體生態系上市+上櫃約 450–600 支，分屬多個 Wespai 官方產業分類。
+# 必須同時匹配「Wespai 官方產業名稱」與「公司業務描述詞」才能完整覆蓋。
+#
+# 【官方產業分類 (Wespai 產業欄直接對應)】
+#   半導體業、電子零組件業、光電業、電腦及週邊設備業、通信網路業 …
+# 【業務描述詞 (公司簡介/產品描述內含)】
+#   IC設計、晶圓代工、封裝測試、記憶體、功率元件 …
+# ─────────────────────────────────────────────────────────────────────────────
 SEMI_KEYWORDS = [
-    "半導體", "積體電路", "IC設計", "ic設計",
-    "晶圓", "封裝", "測試", "記憶體", "DRAM", "Flash", "NAND",
-    "功率元件", "電源管理", "類比IC", "RF", "混合訊號",
-    "伺服器", "Server", "雲端", "AI", "GPU", "HBM", "CoWoS",
-    "基板", "導線框", "引線框", "散熱", "液冷", "ABF",
-    "矽智財", "IP矽", "EDA", "化合物半導體", "碳化矽", "氮化鎵",
-    "被動元件", "電感", "MLCC", "連接器",
+    # ── Wespai 官方產業分類名稱（最關鍵！直接對到分類欄位）─────────────────
+    "半導體",           # 半導體業（TSMC、聯電、世界先進等）
+    "電子零組件",       # 電子零組件業（大量IC、被動、連接器公司）
+    "光電",             # 光電業（感測器、LED、雷射、CMOS）
+    "通信網路",         # 通信網路業（WiFi/BT/5G晶片、網通設備）
+    "電腦及週邊",       # 電腦及週邊設備業（伺服器、AI伺服器、儲存）
+    "其他電子",         # 其他電子業（catch-all 大量電子公司）
+
+    # ── 核心半導體製程 ──────────────────────────────────────────────────────
+    "積體電路", "IC設計", "ic設計", "晶圓", "晶圓代工",
+    "封裝", "測試", "封裝測試", "OSAT",
+
+    # ── 記憶體 ──────────────────────────────────────────────────────────────
+    "記憶體", "DRAM", "Flash", "NAND", "NOR", "SRAM", "HBM",
+
+    # ── 功率/電源/類比 ───────────────────────────────────────────────────────
+    "功率元件", "電源管理", "類比", "PMIC", "MOSFET", "IGBT",
+    "驅動IC", "混合訊號",
+
+    # ── 無線/射頻 ────────────────────────────────────────────────────────────
+    "RF", "射頻", "藍牙", "WiFi", "無線", "5G晶片",
+
+    # ── AI / 伺服器基礎設施 ──────────────────────────────────────────────────
+    "伺服器", "Server", "資料中心", "AI加速", "GPU", "NPU",
+    "CoWoS", "ABF", "HBM", "先進封裝",
+
+    # ── 基板 / 載板 / PCB ────────────────────────────────────────────────────
+    "基板", "載板", "導線框", "引線框", "印刷電路板", "電路板", "PCB",
+
+    # ── 散熱 / 機構 ──────────────────────────────────────────────────────────
+    "散熱", "液冷", "均溫板", "熱管", "水冷",
+
+    # ── 化合物半導體 / 新材料 ────────────────────────────────────────────────
+    "化合物半導體", "碳化矽", "SiC", "氮化鎵", "GaN",
+    "矽晶圓", "磊晶", "砷化鎵",
+
+    # ── 半導體材料 / 設備 ────────────────────────────────────────────────────
+    "光罩", "光阻", "研磨", "CMP", "濺鍍", "蝕刻",
+    "半導體設備", "晶圓設備",
+
+    # ── 被動元件 / 連接器（電子零組件業子類） ───────────────────────────────
+    "被動元件", "電感", "MLCC", "電容", "電阻", "連接器",
+
+    # ── IP / 設計工具 ────────────────────────────────────────────────────────
+    "矽智財", "IP矽", "EDA", "IP授權",
+
+    # ── 感測器 / 影像 ────────────────────────────────────────────────────────
+    "感測器", "CMOS感測", "影像感測", "ToF", "LiDAR",
 ]
 
-# ── 半導體族群合理估值門檻（含高成長 AI/伺服器股） ────────────────────────
-SEMI_PE_MAX    = 45.0    # 半導體本益比上限（IC設計成長股 PE 可達 40+）
-SEMI_PB_MAX    = 8.0     # 股價淨值比上限（台積電等級約 5–7）
-SEMI_SCORE_MIN = 5.0     # 強勢股技術分門檻（滿分10，≥5才是真正共振）
-SEMI_SCAN_MAX  = 500     # 半導體族群預估上限（確保全掃）
+# ── 估值門檻 ──────────────────────────────────────────────────────────────────
+# 台灣半導體各子族群估值參考（2024–2025 市場均值）：
+#   晶圓代工   PE 12–25  PB 2–5
+#   IC設計     PE 15–40  PB 2–8   ← 成長股 PE 可達 40+
+#   封裝測試   PE 10–20  PB 1–3
+#   伺服器/AI  PE 20–60  PB 2–6   ← AI 題材本益比高
+#   被動元件   PE 15–30  PB 1–4
+# ─────────────────────────────────────────────────────────────────────────────
+SEMI_PE_MAX    = 60.0    # 上調至 60，涵蓋 AI/伺服器成長股（原 45 太嚴）
+SEMI_PB_MAX    = 10.0    # 上調至 10，涵蓋高品質 IC 設計領頭羊（原 8）
+SEMI_PE_MIN    = -999.0  # 允許虧損股進入族群（PE<0 也掃，但技術分會過濾）
+SEMI_SCORE_MIN = 5.0     # 強勢股技術分門檻（≥5/10 需多因子共振）
+SEMI_SCAN_MAX  = 1500    # 大幅提高上限，確保全掃（台灣半導體生態系約 500–600 支）
 
 # ── Telegram（從 Streamlit Secrets 讀取）────────────────────────────────────
 def _get_tg_creds():
@@ -749,9 +808,16 @@ def _build_scan_pool(market_map: dict, pe_lim: float, pb_lim: float,
 # 半導體族群自動掃描 & Telegram 推播
 # ─────────────────────────────────────────────────────────────────────────────
 def is_semiconductor(industry: str) -> bool:
-    """判斷 Wespai 產業欄位是否屬於半導體族群（模糊比對）"""
+    """
+    判斷 Wespai 產業欄位是否屬於半導體生態系族群。
+    SEMI_KEYWORDS 已包含官方產業分類名稱（如「電子零組件」「光電」）
+    與業務描述詞（如「IC設計」「晶圓」），一個函數統一比對。
+    """
     ind = str(industry).strip()
-    return any(kw.lower() in ind.lower() for kw in SEMI_KEYWORDS)
+    if not ind or ind in ("nan", "None", ""):
+        return False
+    ind_lower = ind.lower()
+    return any(kw.lower() in ind_lower for kw in SEMI_KEYWORDS)
 
 
 def is_tw_trading_day() -> bool:
@@ -892,14 +958,12 @@ def run_semiconductor_scan(market_map: dict, status_placeholder=None) -> list:
     """
     import concurrent.futures
 
-    # 1. 基本面 + 產業過濾（瞬間完成）
+    # 1. 產業關鍵字過濾（瞬間完成，不再用 PE/PB 濾掉入池標的）
+    #    PE/PB 只做資訊顯示，入池只要：是半導體族群 + 股價 > 0
+    #    技術分 (SEMI_SCORE_MIN) 才是真正的強勢過濾器
     semi_pool = {
         code: info for code, info in market_map.items()
         if is_semiconductor(info.get("產業", ""))
-        and _sf(info.get("PE"), 999) > 0
-        and _sf(info.get("PE"), 999) <= SEMI_PE_MAX
-        and _sf(info.get("PB"), 999) > 0
-        and _sf(info.get("PB"), 999) <= SEMI_PB_MAX
         and _sf(info.get("現價"), 0) > 0
     }
     scan_list  = list(semi_pool.items())[:SEMI_SCAN_MAX]
@@ -1567,14 +1631,51 @@ with tab5:
     _after18  = _tw_now.hour >= 18
 
     # Status cards
-    _semi_pool_n = sum(1 for v in MARKET_MAP.values() if is_semiconductor(v.get("產業", "")))
+    # ── 三層漏斗計數（關鍵字→有報價→估值合理） ──────────────────────────
+    _semi_kw_n   = sum(1 for v in MARKET_MAP.values()
+                       if is_semiconductor(v.get("產業", "")))
+    _semi_price_n = sum(1 for v in MARKET_MAP.values()
+                        if is_semiconductor(v.get("產業", ""))
+                        and _sf(v.get("現價"), 0) > 0)
+    _semi_val_n  = sum(1 for v in MARKET_MAP.values()
+                       if is_semiconductor(v.get("產業", ""))
+                       and _sf(v.get("現價"), 0) > 0
+                       and 0 < _sf(v.get("PE"), 0) <= SEMI_PE_MAX
+                       and 0 < _sf(v.get("PB"), 0) <= SEMI_PB_MAX)
+
+    # ── 產業分布（Top 10）──────────────────────────────────────────────────
+    from collections import Counter as _Counter
+    _ind_counter = _Counter(
+        str(v.get("產業", "未分類"))
+        for v in MARKET_MAP.values()
+        if is_semiconductor(v.get("產業", ""))
+    )
+
     st.markdown(f"""
-<div class="sc" style="font-size:0.82rem;line-height:2.0;">
+<div class="sc" style="font-size:0.82rem;line-height:2.2;">
+  <div style="font-weight:900;margin-bottom:10px;font-family:var(--sans)">
+    族群篩選漏斗
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px 12px;margin-bottom:12px;">
+    <div>
+      <span class="sc-kv-label">① 關鍵字命中</span><br>
+      <span class="sc-kv-value" style="font-size:1.1rem;color:var(--text)">{_semi_kw_n} 檔</span><br>
+      <span style="font-size:0.65rem;color:var(--muted)">半導體生態系族群</span>
+    </div>
+    <div>
+      <span class="sc-kv-label">② 有即時報價</span><br>
+      <span class="sc-kv-value" style="font-size:1.1rem;color:var(--gold)">{_semi_price_n} 檔</span><br>
+      <span style="font-size:0.65rem;color:var(--muted)">Wespai 有收盤價</span>
+    </div>
+    <div>
+      <span class="sc-kv-label">③ 估值合理</span><br>
+      <span class="sc-kv-value" style="font-size:1.1rem;color:var(--down)">{_semi_val_n} 檔</span><br>
+      <span style="font-size:0.65rem;color:var(--muted)">PE≤{SEMI_PE_MAX} PB≤{SEMI_PB_MAX}</span>
+    </div>
+  </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;">
-    <div><span class="sc-kv-label">半導體族群總數</span><br>
-         <span class="sc-kv-value">{_semi_pool_n} 檔</span></div>
-    <div><span class="sc-kv-label">估值門檻</span><br>
-         <span class="sc-kv-value">PE≤{SEMI_PE_MAX} PB≤{SEMI_PB_MAX}</span></div>
+    <div><span class="sc-kv-label">實際掃描範圍</span><br>
+         <span class="sc-kv-value">全部 {_semi_price_n} 檔（不限 PE/PB）</span></div>
     <div><span class="sc-kv-label">技術分門檻</span><br>
          <span class="sc-kv-value">≥ {SEMI_SCORE_MIN}/10（強勢股）</span></div>
     <div><span class="sc-kv-label">排程時間</span><br>
@@ -1588,6 +1689,17 @@ with tab5:
   </div>
 </div>
 """, unsafe_allow_html=True)
+
+    # ── 產業分布明細（可展開） ──────────────────────────────────────────────
+    with st.expander(f"🔬 產業分布明細（共 {len(_ind_counter)} 種分類）", expanded=False):
+        _ind_df = pd.DataFrame(
+            [{"產業分類": k, "標的數": v} for k, v in _ind_counter.most_common()],
+        )
+        st.dataframe(_ind_df, use_container_width=True, hide_index=True)
+        st.caption(
+            "若某產業分類標的數過少（0–5 檔），代表 Wespai 使用了不同分類名稱，"
+            "可截圖回報以便加入新關鍵字。"
+        )
 
     # 自動觸發說明
     if _is_tday and _after18 and not _is_today:
