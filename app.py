@@ -315,19 +315,13 @@ with tab1:
             else:
                 action_line = "<span class='sig-watch'>☕ 觀望中，無明確動作</span>"
 
+            _ptag_html = f'<div style="margin-top:4px">{pattern_html}</div>' if pattern_html else ''
             st.markdown(f"""
 <div class="sc">
   <div class="sc-accent" style="background:{accent_colour(strat)}"></div>
   <div class="sc-top">
-    <div>
-      <div class="sc-name">{r['Name']} <span class="sc-code">{r['Symbol']}</span></div>
-      <div style="margin-top:3px;font-size:0.7rem;color:var(--muted)">{m['產業']} · PE {m['PE']} · PB {m['PB']}</div>
-      {('<div style="margin-top:4px">' + pattern_html + '</div>') if pattern_html else ''}
-    </div>
-    <div style="text-align:right">
-      {signal_badge_html(strat)}
-      <div style="margin-top:4px;font-family:var(--mono);font-size:0.7rem;color:var(--muted)">分數 {strat['score']:.1f}/10</div>
-    </div>
+    <div><div class="sc-name">{r['Name']} <span class="sc-code">{r['Symbol']}</span></div><div style="margin-top:3px;font-size:0.7rem;color:var(--muted)">{m['產業']} · PE {m['PE']} · PB {m['PB']}</div>{_ptag_html}</div>
+    <div style="text-align:right">{signal_badge_html(strat)}<div style="margin-top:4px;font-family:var(--mono);font-size:0.7rem;color:var(--muted)">分數 {strat['score']:.1f}/10</div></div>
   </div>
   <div style="display:flex;justify-content:space-between;align-items:baseline;">
     <span class="sc-price" style="color:{pl_colour(diff_val)}">${cp:.2f}</span>
@@ -537,20 +531,13 @@ with tab3:
         sc     = p_strat["score"]
         sc_col = "var(--up)" if sc >= 5 else "var(--gold)" if sc >= 3 else "var(--muted)"
 
+        _mtf_note_html = f'<div style="margin-top:6px;font-size:0.75rem;color:var(--blue)">📡 {p_strat.get("mtf_note","")}</div>' if p_strat.get("mtf_note") else ''
         st.markdown(f"""
 <div class="sc" style="margin-bottom:14px;">
   <div class="sc-top">
-    <div>
-      <div class="sc-name">{p_name}</div>
-      <div style="margin-top:3px">{signal_badge_html(p_strat)}</div>
-      {('<div style="margin-top:6px;font-size:0.75rem;color:var(--blue)">📡 ' + p_strat.get("mtf_note","") + '</div>') if p_strat.get("mtf_note") else ''}
-    </div>
-    <div style="text-align:right">
-      <div style="font-family:var(--mono);font-size:1.8rem;font-weight:700;color:{sc_col}">{sc:.1f}</div>
-      <div style="font-size:0.65rem;color:var(--muted)">/ 10 分</div>
-    </div>
-  </div>
-  {score_bar_html(sc)}
+    <div><div class="sc-name">{p_name}</div><div style="margin-top:3px">{signal_badge_html(p_strat)}</div>{_mtf_note_html}</div>
+    <div style="text-align:right"><div style="font-family:var(--mono);font-size:1.8rem;font-weight:700;color:{sc_col}">{sc:.1f}</div><div style="font-size:0.65rem;color:var(--muted)">/ 10 分</div></div>
+  </div>{score_bar_html(sc)}
 </div>
 """, unsafe_allow_html=True)
 
@@ -704,22 +691,14 @@ with tab4:
                 patterns = detect_candlestick_patterns(h_df) if h_df is not None else {}
                 ptag = "".join(f'<span class="pattern-tag">{v}</span>' for v in list(patterns.values())[:1])
 
+                _wl_ptag = f'<div style="margin-top:3px">{ptag}</div>' if ptag else ''
                 st.markdown(f"""
 <div class="sk-card">
   <div style="flex:1">
     <div style="display:flex;justify-content:space-between;align-items:center">
-      <div>
-        <div class="sk-ticker">{wr['Symbol']} {wr['Name']}</div>
-        <div style="font-size:0.68rem;color:var(--muted)">{wr.get('Note','')}</div>
-        {('<div style="margin-top:3px">' + ptag + '</div>') if ptag else ''}
-      </div>
-      <div style="text-align:right">
-        <div style="font-family:var(--mono);font-size:1.1rem;font-weight:700">${cp:.2f}</div>
-        {signal_badge_html(strat)}
-        <div style="font-size:0.68rem;color:var(--muted);margin-top:2px">分數 {strat['score']:.1f}/10</div>
-      </div>
-    </div>
-    {score_bar_html(strat['score'])}
+      <div><div class="sk-ticker">{wr['Symbol']} {wr['Name']}</div><div style="font-size:0.68rem;color:var(--muted)">{wr.get('Note','')}</div>{_wl_ptag}</div>
+      <div style="text-align:right"><div style="font-family:var(--mono);font-size:1.1rem;font-weight:700">${cp:.2f}</div>{signal_badge_html(strat)}<div style="font-size:0.68rem;color:var(--muted);margin-top:2px">分數 {strat['score']:.1f}/10</div></div>
+    </div>{score_bar_html(strat['score'])}
   </div>
 </div>""", unsafe_allow_html=True)
 
