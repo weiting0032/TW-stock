@@ -101,7 +101,7 @@ def run_scan(market_map: dict, scan_list: list, min_score: float,
             h_df  = fetch_stock_history(code)
             if h_df is None:
                 return None
-            strat = get_strategy(h_df)
+            strat = get_strategy(h_df, market_info=info)
             return _make_candidate(code, info, strat, h_df) if strat["score"] >= min_score else None
         except Exception:
             return None

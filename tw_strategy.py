@@ -12,7 +12,8 @@ def _default_strat(name: str, color: str) -> dict:
     }
 
 
-def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0) -> dict:
+def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0,
+                 market_info: dict = None) -> dict:
     """多因子評分策略 (0–10分)"""
     if df is None or df.empty or len(df) < 20:
         return _default_strat("資料不足", "#5A6072")
@@ -38,9 +39,15 @@ def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0)
     high52 = close if _h52 is None or pd.isna(_h52) else float(_h52)
     low52  = close if _l52 is None or pd.isna(_l52) else float(_l52)
 
+    # Market info（三大法人、融資）
+    inst_net    = float(market_info.get("三大合計", 0) or 0) if market_info else 0.0
+    margin_rate = float(market_info.get("融資率",  0) or 0) if market_info else 0.0
+
     stop_loss   = max(close - 2.0 * atr, sma60 * 0.98, close * 0.88) if atr else close * 0.88
     take_profit = min(high52, close + 3.0 * atr) if atr and high52 > close else (close + 3.0 * atr if atr else close * 1.12)
-    base_lots   = 1 if close > 150 else 2 if close > 60 else 3
+    # ATR-based position sizing（每筆風險上限 30,000 TWD）
+    _sl_dist  = max(close - stop_loss, close * 0.05)
+    base_lots = max(1, min(5, int(30_000 / (_sl_dist * 1000))))
 
     score, reasons, warnings = 0.0, [], []
 
@@ -80,7 +87,7 @@ def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0)
 
     # 5. BB breakout
     prev_bb_w = float(prev.get("BB_Width", 1.0))
-    if close > float(last["BB_Upper"]) and vol_r > 1.5 and prev_bb_w < 0.10:
+    if close > float(last["BB_Upper"]) and vol_r > 1.5 and prev_bb_w < 0.08:
         score += 2.5; reasons.append("BB壓縮放量突破")
     elif bb_w < 0.08:
         reasons.append("BB醞釀蓄力")
@@ -91,18 +98,52 @@ def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0)
     elif vol_r < 0.5:
         warnings.append("成交量萎縮")
 
+    # 6b. OBV trend（籌碼承接確認）
+    if len(df) >= 6:
+        obv_5d  = float(df["OBV"].iloc[-6])
+        obv_now = float(last["OBV"])
+        if obv_now > obv_5d and close > sma20:
+            score += 0.5; reasons.append("OBV籌碼承接")
+        elif obv_now < obv_5d and close > sma20:
+            warnings.append("OBV走弱，留意出貨")
+
     # 7. MACD
     prev_hist = float(prev["Hist"])
-    if macd_h > 0 and prev_hist < macd_h:
-        score += 0.5; reasons.append("MACD翻多")
-    elif macd_h < 0 and prev_hist > macd_h:
-        score -= 0.5; warnings.append("MACD轉弱")
+    if prev_hist < 0 <= macd_h:              # 零軸翻多（最強訊號）
+        score += 1.5; reasons.append("MACD零軸翻多")
+    elif macd_h > 0 and macd_h > prev_hist:  # 正區間動能增強
+        score += 0.5; reasons.append("MACD動能增強")
+    elif macd_h < 0 and macd_h < prev_hist:  # 負區間繼續惡化
+        score -= 0.5; warnings.append("MACD動能轉弱")
 
     # 8. 52W position
     if close >= high52 * 0.95:
         score += 0.5; reasons.append("接近年高")
     if (close - low52) / max(high52 - low52, 1e-9) < 0.15:
         score += 0.5; reasons.append("接近年低支撐")
+
+    # 9. 10-day price momentum
+    if len(df) >= 12:
+        mom10 = (close / float(df["Close"].iloc[-11]) - 1) * 100
+        if mom10 > 5.0:
+            score += 0.5; reasons.append(f"10日動能({mom10:.1f}%)")
+        elif mom10 < -8.0:
+            score -= 0.5; warnings.append(f"10日走弱({mom10:.1f}%)")
+
+    # 10. Institutional flow（三大法人 + 融資警示）
+    if market_info:
+        if inst_net > 500:
+            score += 1.0; reasons.append(f"法人大幅買超{int(inst_net)}張")
+        elif inst_net > 100:
+            score += 0.5; reasons.append(f"法人買超{int(inst_net)}張")
+        elif inst_net < -500:
+            score -= 1.0; warnings.append(f"法人大幅賣超{int(abs(inst_net))}張")
+        elif inst_net < -100:
+            score -= 0.5; warnings.append(f"法人賣超{int(abs(inst_net))}張")
+        if margin_rate > 20.0:
+            score -= 1.0; warnings.append(f"融資率過高({margin_rate:.1f}%)")
+        elif margin_rate > 15.0:
+            score -= 0.5; warnings.append(f"融資率偏高({margin_rate:.1f}%)")
 
     score       = max(0.0, min(10.0, score))
     reason_str  = "、".join(reasons[:4]) if reasons else "無明顯因子"
@@ -165,9 +206,10 @@ def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0)
 
 
 def get_strategy_mtf(daily_df: pd.DataFrame, weekly_df,
-                     held_shares: float = 0, held_cost: float = 0) -> dict:
+                     held_shares: float = 0, held_cost: float = 0,
+                     market_info: dict = None) -> dict:
     """日線策略 + 週線濾網：雙重確認才升級訊號"""
-    strat = get_strategy(daily_df, held_shares, held_cost)
+    strat = get_strategy(daily_df, held_shares, held_cost, market_info=market_info)
 
     if weekly_df is None or (hasattr(weekly_df, "empty") and weekly_df.empty):
         strat["mtf_note"] = "週線資料不足，僅採日線判斷"

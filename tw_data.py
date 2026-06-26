@@ -58,12 +58,20 @@ def get_market_data() -> dict:
     url = "https://stock.wespai.com/lists"
     try:
         res  = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-        data = pd.read_html(res.text)[0].iloc[:, [0, 1, 2, 3, 14, 15]].copy()
-        data.columns = ["代碼", "名稱", "產業", "現價", "PE", "PB"]
+        data = pd.read_html(res.text)[0].iloc[:, [0, 1, 2, 3, 4, 8, 9, 10, 11, 14, 15, 17]].copy()
+        data.columns = ["代碼", "名稱", "產業", "現價", "漲跌幅", "投信", "外資", "自營", "三大合計", "PE", "PB", "融資率"]
         data["代碼"] = data["代碼"].astype(str).str.zfill(4)
         data["現價"] = pd.to_numeric(data["現價"], errors="coerce")
         data["PE"]   = pd.to_numeric(data["PE"],   errors="coerce").fillna(999.0)
         data["PB"]   = pd.to_numeric(data["PB"],   errors="coerce").fillna(999.0)
+        data["漲跌幅"] = pd.to_numeric(
+            data["漲跌幅"].astype(str).str.replace("%", "", regex=False), errors="coerce"
+        ).fillna(0.0)
+        for col in ["投信", "外資", "自營", "三大合計"]:
+            data[col] = pd.to_numeric(data[col], errors="coerce").fillna(0)
+        data["融資率"] = pd.to_numeric(
+            data["融資率"].astype(str).str.replace("%", "", regex=False), errors="coerce"
+        ).fillna(0.0)
         return data.set_index("代碼").to_dict("index")
     except Exception as e:
         st.error(f"市場報價抓取失敗: {e}")

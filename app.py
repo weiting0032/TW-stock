@@ -248,7 +248,7 @@ with tab1:
                 continue
             cp    = m["現價"]
             h_df  = fetch_stock_history(r["Symbol"])
-            strat = get_strategy(h_df, r["Shares"], r["Cost"]) if h_df is not None else _default_strat("連線失敗", "#5A6072")
+            strat = get_strategy(h_df, r["Shares"], r["Cost"], market_info=m) if h_df is not None else _default_strat("連線失敗", "#5A6072")
             details.append({"r": r, "m": m, "cp": cp,
                              "mv": cp * r["Shares"], "cv": r["Cost"] * r["Shares"],
                              "strat": strat, "df": h_df})
@@ -315,7 +315,18 @@ with tab1:
             else:
                 action_line = "<span class='sig-watch'>☕ 觀望中，無明確動作</span>"
 
-            _ptag_html = f'<div style="margin-top:4px">{pattern_html}</div>' if pattern_html else ''
+            # Pre-compute all conditional values to avoid blank-line HTML rendering issues
+            _inst_net   = float(m.get("三大合計", 0) or 0) if m else 0.0
+            _inst_col   = "var(--up)" if _inst_net > 0 else "var(--down)" if _inst_net < 0 else "var(--muted)"
+            _inst_str   = f"+{int(_inst_net)}張" if _inst_net > 0 else (f"{int(_inst_net)}張" if _inst_net < 0 else "—")
+            _day_chg    = float(m.get("漲跌幅", 0) or 0) if m else 0.0
+            _chg_col    = "var(--up)" if _day_chg > 0 else "var(--down)" if _day_chg < 0 else "var(--muted)"
+            _chg_str    = f"{_day_chg:+.2f}%" if _day_chg != 0 else "—"
+            _vol_r_col  = "var(--up)" if vol_r >= 1.5 else "var(--muted)"
+            _reasons_s  = "、".join(strat['reasons'][:2]) if strat['reasons'] else "—"
+            _pct_dir    = "▲" if p_pct > 0 else "▼" if p_pct < 0 else "—"
+            _pl_dir     = "▲" if diff_val >= 0 else "▼"
+            _ptag_html  = f'<div style="margin-top:4px">{pattern_html}</div>' if pattern_html else ''
             st.markdown(f"""
 <div class="sc">
   <div class="sc-accent" style="background:{accent_colour(strat)}"></div>
@@ -323,21 +334,16 @@ with tab1:
     <div><div class="sc-name">{r['Name']} <span class="sc-code">{r['Symbol']}</span></div><div style="margin-top:3px;font-size:0.7rem;color:var(--muted)">{m['產業']} · PE {m['PE']} · PB {m['PB']}</div>{_ptag_html}</div>
     <div style="text-align:right">{signal_badge_html(strat)}<div style="margin-top:4px;font-family:var(--mono);font-size:0.7rem;color:var(--muted)">分數 {strat['score']:.1f}/10</div></div>
   </div>
-  <div style="display:flex;justify-content:space-between;align-items:baseline;">
-    <span class="sc-price" style="color:{pl_colour(diff_val)}">${cp:.2f}</span>
-    <span style="font-family:var(--mono);font-size:0.88rem;color:{pl_colour(p_pct)};font-weight:700">
-      {'▲' if p_pct>0 else '▼' if p_pct<0 else '—'}{abs(p_pct):.2f}%
-    </span>
-  </div>
-  <div style="font-family:var(--mono);font-size:0.75rem;color:var(--muted);margin:2px 0 6px">
-    損益 {'▲' if diff_val>=0 else '▼'}${abs(diff_val):,.0f} | 成本 ${r['Cost']:.2f} | {r['Shares']:,.0f}股
-  </div>
+  <div style="display:flex;justify-content:space-between;align-items:baseline;"><span class="sc-price" style="color:{pl_colour(diff_val)}">${cp:.2f}</span><span style="font-family:var(--mono);font-size:0.88rem;color:{pl_colour(p_pct)};font-weight:700">{_pct_dir}{abs(p_pct):.2f}%</span></div>
+  <div style="font-family:var(--mono);font-size:0.75rem;color:var(--muted);margin:2px 0 6px">損益 {_pl_dir}${abs(diff_val):,.0f} | 成本 ${r['Cost']:.2f} | {r['Shares']:,.0f}股</div>
   {score_bar_html(strat['score'])}
   <div class="sc-grid">
     <div><span class="sc-kv-label">停損</span><br><span class="sc-kv-value" style="color:var(--down)">{sl_str}</span></div>
     <div><span class="sc-kv-label">目標</span><br><span class="sc-kv-value" style="color:var(--up)">{tp_str}</span></div>
-    <div><span class="sc-kv-label">量比</span><br><span class="sc-kv-value" style="color:{'var(--up)' if vol_r>=1.5 else 'var(--muted)'}">{vol_r:.1f}x</span></div>
-    <div><span class="sc-kv-label">分析依據</span><br><span class="sc-kv-value" style="font-size:0.68rem">{'、'.join(strat['reasons'][:2]) if strat['reasons'] else '—'}</span></div>
+    <div><span class="sc-kv-label">量比</span><br><span class="sc-kv-value" style="color:{_vol_r_col}">{vol_r:.1f}x</span></div>
+    <div><span class="sc-kv-label">法人流向</span><br><span class="sc-kv-value" style="color:{_inst_col}">{_inst_str}</span></div>
+    <div><span class="sc-kv-label">今日漲跌</span><br><span class="sc-kv-value" style="color:{_chg_col}">{_chg_str}</span></div>
+    <div><span class="sc-kv-label">分析依據</span><br><span class="sc-kv-value" style="font-size:0.68rem">{_reasons_s}</span></div>
   </div>
   <div class="sc-action">{action_line}</div>
 </div>
@@ -508,11 +514,12 @@ with tab3:
     if st.button("🚀 執行深度診斷", use_container_width=True) and selection != "請選擇...":
         parts = selection.split(" ")
         code, name = parts[0], parts[1] if len(parts) > 1 else parts[0]
+        m_info = MARKET_MAP.get(code)
         with st.spinner(f"分析 {name}({code}) …"):
             df       = fetch_stock_history(code)
             weekly_df = fetch_weekly_history(code) if use_mtf else None
             if df is not None:
-                strat = get_strategy_mtf(df, weekly_df) if use_mtf else get_strategy(df)
+                strat = get_strategy_mtf(df, weekly_df, market_info=m_info) if use_mtf else get_strategy(df, market_info=m_info)
                 bt    = run_backtest(df)
                 st.session_state.diag_plot   = (df, name, strat)
                 st.session_state.diag_weekly = weekly_df
@@ -686,7 +693,7 @@ with tab4:
             for _, wr in wl_df.iterrows():
                 m     = MARKET_MAP.get(wr["Symbol"])
                 h_df  = fetch_stock_history(wr["Symbol"])
-                strat = get_strategy(h_df) if h_df is not None else _default_strat("連線失敗", "#5A6072")
+                strat = get_strategy(h_df, market_info=m) if h_df is not None else _default_strat("連線失敗", "#5A6072")
                 cp    = m["現價"] if m else 0.0
                 patterns = detect_candlestick_patterns(h_df) if h_df is not None else {}
                 ptag = "".join(f'<span class="pattern-tag">{v}</span>' for v in list(patterns.values())[:1])
@@ -758,8 +765,10 @@ with tab5:
     <tr><td style="color:var(--muted)">KD 低檔黃金交叉</td><td>最高 +2.5</td></tr>
     <tr><td style="color:var(--muted)">RSI 超賣翻揚</td><td>最高 +1.5</td></tr>
     <tr><td style="color:var(--muted)">BB 壓縮放量突破</td><td>+2.5</td></tr>
-    <tr><td style="color:var(--muted)">成交量比 ≥2x</td><td>+1.0</td></tr>
-    <tr><td style="color:var(--muted)">MACD 翻多</td><td>+0.5</td></tr>
+    <tr><td style="color:var(--muted)">成交量比 ≥2x + OBV 承接</td><td>最高 +1.5</td></tr>
+    <tr><td style="color:var(--muted)">MACD 零軸翻多</td><td>最高 +1.5</td></tr>
+    <tr><td style="color:var(--muted)">10 日價格動能</td><td>±0.5</td></tr>
+    <tr><td style="color:var(--muted)">三大法人買超</td><td>最高 +1.0</td></tr>
     <tr><td style="color:var(--muted)">接近年高/年低</td><td>+0.5</td></tr>
   </table>
   <div style="margin-top:12px;font-weight:700">MTF 週線濾網</div>
