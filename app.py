@@ -248,6 +248,52 @@ c2.metric("未實現損益", f"${total_pl:,.0f}", f"{pl_pct:+.2f}%")
 c3.metric("投入成本",   f"${total_cost:,.0f}")
 c4.metric("持倉檔數",   f"{len(portfolio)} 檔")
 
+# ── 大盤週期快覽（主頁常駐）─────────────────────────────────────────────────
+_cyc_m = TAIEX_CYCLE
+if _cyc_m:
+    _m_phase_col  = "var(--up)"  if _cyc_m["phase"] == 1 else "var(--down)"
+    _m_risk_col   = {"high": "var(--down)" if _cyc_m["phase"]==1 else "var(--up)",
+                     "medium": "var(--gold)", "safe": "var(--blue)"}[_cyc_m["flip_risk"]]
+    _m_over_avg   = _cyc_m["est_remaining"] == 0
+    _m_rem_label  = (f"超均值 +{_cyc_m['days_in_cycle'] - _cyc_m['avg_same_days']} 天 ⚠️"
+                     if _m_over_avg else f"估計剩餘 {_cyc_m['est_remaining']} 天")
+    _m_rem_col    = "var(--gold)" if _m_over_avg else "var(--cyan)"
+    _m_icon       = "🔺" if _cyc_m["phase"] == 1 else "🔻"
+    _m_bar_w      = min(int(_cyc_m["days_in_cycle"] / max(_cyc_m["avg_same_days"], 1) * 100), 100)
+    _m_bar_col    = "var(--gold)" if _m_over_avg else _m_phase_col
+    st.markdown(f"""
+<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;
+            padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;
+            gap:20px;flex-wrap:wrap;position:relative;overflow:hidden;">
+  <div style="position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:14px 0 0 14px;background:{_m_phase_col}"></div>
+  <div style="min-width:90px">
+    <div style="font-size:0.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-family:var(--sans)">大盤週期</div>
+    <div style="font-size:1.05rem;font-weight:900;color:{_m_phase_col};margin-top:2px">{_m_icon} {_cyc_m["phase_label"]}</div>
+    <div style="font-size:0.65rem;color:var(--muted);margin-top:1px">起 {_cyc_m["cycle_start"]}</div>
+  </div>
+  <div style="min-width:70px;text-align:center">
+    <div style="font-size:0.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-family:var(--sans)">已持續</div>
+    <div style="font-family:var(--mono);font-size:1.8rem;font-weight:700;color:{_m_phase_col};line-height:1">{_cyc_m["days_in_cycle"]}</div>
+    <div style="font-size:0.62rem;color:var(--muted)">交易日</div>
+  </div>
+  <div style="min-width:100px;text-align:center">
+    <div style="font-size:0.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-family:var(--sans)">距翻轉估計</div>
+    <div style="font-family:var(--mono);font-size:1.1rem;font-weight:700;color:{_m_rem_col};margin-top:4px">{_m_rem_label}</div>
+    <div style="font-size:0.62rem;color:var(--muted)">均值 {_cyc_m["avg_same_days"]} 天</div>
+  </div>
+  <div style="flex:1;min-width:160px">
+    <div style="font-size:0.62rem;color:var(--muted);margin-bottom:5px">週期進度（第 {_cyc_m["days_in_cycle"]} / 均 {_cyc_m["avg_same_days"]} 天）</div>
+    <div class="wbar-bg"><div class="wbar-fill" style="width:{_m_bar_w}%;background:{_m_bar_col}"></div></div>
+    <div style="margin-top:8px;font-size:0.72rem;color:{_m_risk_col};font-family:var(--sans)">{_cyc_m["flip_msg"]}</div>
+  </div>
+  <div style="min-width:80px;text-align:right">
+    <div style="font-size:0.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-family:var(--sans)">距SMA60</div>
+    <div style="font-family:var(--mono);font-size:1.1rem;font-weight:700;color:{_m_risk_col}">{_cyc_m["dist_pct"]:+.1f}%</div>
+    <div style="font-size:0.62rem;color:var(--muted);margin-top:2px">{_cyc_m["sma60"]:,.0f} pt</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
 st.markdown("<hr class='qdiv'>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
