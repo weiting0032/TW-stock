@@ -183,6 +183,118 @@ def save_portfolio_snapshot(market_value: float, cost: float, pnl: float):
         pass
 
 
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_taiex_cycle() -> dict | None:
+    """
+    下載加權指數 (^TWII) 3年日線，計算目前牛熊週期狀態。
+    週期定義：收盤 > SMA60 → 上漲週期；收盤 < SMA60 → 下跌週期。
+    翻轉風險：距 SMA60 距離 + MACD Histogram 方向。
+    """
+    try:
+        df = yf.Ticker("^TWII").history(period="3y", auto_adjust=True)
+        if df.empty or len(df) < 60:
+            return None
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+
+        df = df[["Open", "High", "Low", "Close"]].copy()
+        df["SMA20"]  = df["Close"].rolling(20).mean()
+        df["SMA60"]  = df["Close"].rolling(60).mean()
+        df["SMA240"] = df["Close"].rolling(240, min_periods=60).mean()
+
+        ema12        = df["Close"].ewm(span=12, adjust=False).mean()
+        ema26        = df["Close"].ewm(span=26, adjust=False).mean()
+        df["MACD"]   = ema12 - ema26
+        df["Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
+        df["Hist"]   = df["MACD"] - df["Signal"]
+
+        df = df.dropna(subset=["SMA60"])
+        if len(df) < 5:
+            return None
+
+        # 1 = 上漲週期，0 = 下跌週期
+        df["is_up"] = (df["Close"] > df["SMA60"]).astype(int)
+        phase_arr   = df["is_up"].values
+        last        = df.iloc[-1]
+
+        current_phase = int(last["is_up"])
+
+        # 計算連續天數
+        days_in_cycle = 0
+        for i in range(len(phase_arr) - 1, -1, -1):
+            if phase_arr[i] == current_phase:
+                days_in_cycle += 1
+            else:
+                break
+
+        cycle_start = df.index[len(df) - days_in_cycle]
+
+        # 歷史週期長度統計（排除目前進行中的）
+        cycle_lengths = []
+        curr_len, curr_p = 1, phase_arr[0]
+        for i in range(1, len(phase_arr)):
+            if phase_arr[i] == curr_p:
+                curr_len += 1
+            else:
+                cycle_lengths.append(curr_len)
+                curr_len, curr_p = 1, phase_arr[i]
+        avg_cycle = int(sum(cycle_lengths) / len(cycle_lengths)) if cycle_lengths else 30
+        # 同方向週期均值（每隔一個取，因上/下交替）
+        same_dir = cycle_lengths[::2] if len(cycle_lengths) >= 2 else cycle_lengths
+        avg_same = int(sum(same_dir) / len(same_dir)) if same_dir else avg_cycle
+
+        close   = float(last["Close"])
+        sma20   = float(last["SMA20"])
+        sma60   = float(last["SMA60"])
+        sma240_v = last.get("SMA240")
+        sma240  = float(sma240_v) if sma240_v is not None and not pd.isna(sma240_v) else None
+        macd_v  = float(last["MACD"])
+        hist_v  = float(last["Hist"])
+
+        dist_pct = (close - sma60) / sma60 * 100  # 正=在SMA60上方, 負=下方
+
+        # 翻轉風險判斷
+        if current_phase == 1:  # 上漲週期，留意跌破
+            if abs(dist_pct) < 1.5 and hist_v < 0:
+                flip_risk, flip_msg = "high",   f"⚠️ 距SMA60僅 {dist_pct:+.1f}%，MACD Hist 轉負，翻轉風險高"
+            elif abs(dist_pct) < 3.0:
+                flip_risk, flip_msg = "medium",  f"注意：距SMA60 {dist_pct:+.1f}%，接近警戒線"
+            else:
+                flip_risk, flip_msg = "safe",    f"距SMA60 {dist_pct:+.1f}%，上漲格局穩定"
+        else:  # 下跌週期，留意突破
+            if abs(dist_pct) < 1.5 and hist_v > 0:
+                flip_risk, flip_msg = "high",   f"⚠️ 距SMA60僅 {dist_pct:+.1f}%，MACD Hist 轉正，回升機率高"
+            elif abs(dist_pct) < 3.0:
+                flip_risk, flip_msg = "medium",  f"注意：距SMA60 {dist_pct:+.1f}%，可能蓄勢突破"
+            else:
+                flip_risk, flip_msg = "safe",    f"距SMA60 {dist_pct:.1f}%，下跌格局延續"
+
+        high52 = float(df["Close"].rolling(252, min_periods=60).max().iloc[-1])
+        low52  = float(df["Close"].rolling(252, min_periods=60).min().iloc[-1])
+
+        return {
+            "phase":          current_phase,
+            "phase_label":    "上漲週期" if current_phase == 1 else "下跌週期",
+            "days_in_cycle":  days_in_cycle,
+            "cycle_start":    cycle_start.strftime("%Y-%m-%d"),
+            "close":          round(close, 0),
+            "sma60":          round(sma60, 0),
+            "sma240":         round(sma240, 0) if sma240 else None,
+            "dist_pct":       round(dist_pct, 1),
+            "flip_risk":      flip_risk,
+            "flip_msg":       flip_msg,
+            "macd":           round(macd_v, 1),
+            "hist":           round(hist_v, 1),
+            "avg_cycle_days": avg_cycle,
+            "avg_same_days":  avg_same,
+            "high52w":        round(high52, 0),
+            "low52w":         round(low52, 0),
+        }
+    except Exception:
+        return None
+
+
 # ── Watchlist 寫入 ────────────────────────────────────────────────────────────
 
 def add_to_watchlist(symbol: str, name: str, note: str = ""):

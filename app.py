@@ -13,6 +13,7 @@ import streamlit as st
 
 from tw_data import (
     fetch_stock_history, fetch_weekly_history, get_market_data,
+    fetch_taiex_cycle,
     load_portfolio, load_portfolio_history, load_watchlist,
     save_portfolio_snapshot, add_to_watchlist, remove_from_watchlist,
     get_gsheet_client, PORTFOLIO_SHEET_TITLE,
@@ -151,8 +152,9 @@ def _cached_stock_options(market_map_size: int) -> list:
     return [f"{k} {v['名稱']} ({v['產業']})" for k, v in MARKET_MAP.items()]
 
 
-MARKET_MAP   = get_market_data()
+MARKET_MAP    = get_market_data()
 STOCK_OPTIONS = _cached_stock_options(len(MARKET_MAP))
+TAIEX_CYCLE   = fetch_taiex_cycle()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -193,12 +195,29 @@ check_and_trigger_auto_scan(MARKET_MAP)
 session_now = get_tw_session()
 _sc_cls = {"交易中": "badge-up", "盤前": "badge-gold", "盤後": "badge-blue", "休市": "badge-flat"}
 
+# ── TAIEX 週期徽章 ─────────────────────────────────────────────────────────────
+_cyc = TAIEX_CYCLE
+if _cyc:
+    _cyc_badge_cls = "badge-up" if _cyc["phase"] == 1 else "badge-down"
+    _risk_cls = {"high": "badge-up" if _cyc["phase"] == 0 else "badge-down",
+                 "medium": "badge-gold", "safe": "badge-blue"}[_cyc["flip_risk"]]
+    _cyc_badges = (
+        f'<span class="badge {_cyc_badge_cls}">{_cyc["phase_label"]}</span>'
+        f'<span class="badge badge-gold" style="font-family:\'JetBrains Mono\'">第 {_cyc["days_in_cycle"]} 天</span>'
+        f'<span class="badge {_risk_cls}" style="font-family:\'JetBrains Mono\'">'
+        f'{"翻轉風險↑" if _cyc["flip_risk"]=="high" else "留意" if _cyc["flip_risk"]=="medium" else "穩定"}'
+        f' {_cyc["dist_pct"]:+.1f}%</span>'
+    )
+else:
+    _cyc_badges = ""
+
 st.markdown(f"""
 <div class="tw-header">
   <div class="tw-logo">台股<span>戰情中心</span> <span style="font-size:0.65rem;color:var(--muted)">V16</span></div>
   <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
     <span class="badge {_sc_cls.get(session_now,'badge-flat')}">{session_now}</span>
     <span class="badge badge-flat" style="font-family:'JetBrains Mono'">{datetime.now().strftime('%m/%d %H:%M')}</span>
+    {_cyc_badges}
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -863,6 +882,79 @@ with tab5:
 
     # ── 市場廣度 ──────────────────────────────────────────────────────────────
     with breadth_tab:
+        # ── 大盤週期面板 ──────────────────────────────────────────────────────
+        st.markdown('<div class="qsec">📈 加權指數牛熊週期</div>', unsafe_allow_html=True)
+        _cyc2 = TAIEX_CYCLE
+        if _cyc2:
+            _over_avg = _cyc2["days_in_cycle"] > _cyc2["avg_same_days"]
+            _pct_of_avg = _cyc2["days_in_cycle"] / max(_cyc2["avg_same_days"], 1) * 100
+
+            _phase_col  = "var(--up)"   if _cyc2["phase"] == 1 else "var(--down)"
+            _risk_colour = {"high": "var(--up)" if _cyc2["phase"]==0 else "var(--down)",
+                            "medium": "var(--gold)", "safe": "var(--blue)"}[_cyc2["flip_risk"]]
+            _sma240_row = (
+                f'<div><span class="sc-kv-label">年線SMA240</span><br>'
+                f'<span class="sc-kv-value">{_cyc2["sma240"]:,.0f}</span></div>'
+            ) if _cyc2.get("sma240") else ""
+
+            _bar_w = min(int(_pct_of_avg), 100)
+            _bar_col = "var(--down)" if _over_avg else "var(--up)"
+
+            st.markdown(f"""
+<div class="sc" style="margin-bottom:14px;">
+  <div class="sc-top">
+    <div>
+      <div style="font-size:1.3rem;font-weight:900;font-family:var(--sans);color:{_phase_col}">
+        {"🔺" if _cyc2["phase"]==1 else "🔻"} {_cyc2["phase_label"]}
+      </div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-top:3px">
+        起始日：{_cyc2["cycle_start"]}　|　加權指數 {_cyc2["close"]:,.0f}
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-family:var(--mono);font-size:2rem;font-weight:700;color:{_phase_col}">{_cyc2["days_in_cycle"]}</div>
+      <div style="font-size:0.65rem;color:var(--muted)">天</div>
+    </div>
+  </div>
+
+  <div style="margin:10px 0 4px;font-size:0.68rem;color:var(--muted)">
+    目前進度 vs 歷史同向均值 ({_cyc2["avg_same_days"]} 天)
+    — {"⚠️ 已超過歷史均值，週期延長中" if _over_avg else f"歷史均值剩餘估計 {_cyc2['avg_same_days'] - _cyc2['days_in_cycle']} 天"}
+  </div>
+  <div class="wbar-bg">
+    <div class="wbar-fill" style="width:{_bar_w}%;background:{_bar_col}"></div>
+  </div>
+
+  <div class="sc-grid" style="margin-top:12px;">
+    <div><span class="sc-kv-label">SMA60（翻轉線）</span><br><span class="sc-kv-value">{_cyc2["sma60"]:,.0f}</span></div>
+    <div><span class="sc-kv-label">距翻轉線</span><br>
+         <span class="sc-kv-value" style="color:{_risk_colour}">{_cyc2["dist_pct"]:+.1f}%</span></div>
+    {_sma240_row}
+    <div><span class="sc-kv-label">MACD Histogram</span><br>
+         <span class="sc-kv-value" style="color:{'var(--up)' if _cyc2['hist']>0 else 'var(--down)'}">
+           {_cyc2["hist"]:+.0f}
+         </span></div>
+    <div><span class="sc-kv-label">52W 高點</span><br><span class="sc-kv-value">{_cyc2["high52w"]:,.0f}</span></div>
+    <div><span class="sc-kv-label">52W 低點</span><br><span class="sc-kv-value">{_cyc2["low52w"]:,.0f}</span></div>
+  </div>
+
+  <div class="sc-action" style="margin-top:12px;border-left:3px solid {_risk_colour}">
+    {_cyc2["flip_msg"]}
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+            # 翻轉條件說明
+            if _cyc2["phase"] == 1:
+                st.info("**翻轉為下跌週期條件**：加權指數日收盤跌破 SMA60（"
+                        f"{_cyc2['sma60']:,.0f}）並維持 2 日以上，MACD Histogram 同步轉負視為確認。")
+            else:
+                st.success("**翻轉為上漲週期條件**：加權指數日收盤站回 SMA60（"
+                           f"{_cyc2['sma60']:,.0f}）並維持 2 日以上，MACD Histogram 同步轉正視為確認。")
+        else:
+            st.warning("無法取得加權指數資料（^TWII），請稍後重整頁面。")
+
+        st.markdown('<hr class="qdiv">', unsafe_allow_html=True)
         st.markdown('<div class="qsec">市場廣度（持倉 + 掃描結果）</div>', unsafe_allow_html=True)
         st.caption("廣度計算來源：已快取的持倉標的 + 最近一次掃描結果，不額外觸發 API。")
 
