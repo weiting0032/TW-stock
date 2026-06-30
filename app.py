@@ -199,13 +199,18 @@ _sc_cls = {"交易中": "badge-up", "盤前": "badge-gold", "盤後": "badge-blu
 _cyc = TAIEX_CYCLE
 if _cyc:
     _cyc_badge_cls = "badge-up" if _cyc["phase"] == 1 else "badge-down"
-    _risk_cls = {"high": "badge-up" if _cyc["phase"] == 0 else "badge-down",
+    _risk_cls = {"high": "badge-down" if _cyc["phase"] == 1 else "badge-up",
                  "medium": "badge-gold", "safe": "badge-blue"}[_cyc["flip_risk"]]
+    _est_rem = _cyc["est_remaining"]
+    _rem_txt = (f"超均值 +{_cyc['days_in_cycle'] - _cyc['avg_same_days']}天"
+                if _est_rem == 0
+                else f"估剩 {_est_rem} 天")
     _cyc_badges = (
         f'<span class="badge {_cyc_badge_cls}">{_cyc["phase_label"]}</span>'
         f'<span class="badge badge-gold" style="font-family:\'JetBrains Mono\'">第 {_cyc["days_in_cycle"]} 天</span>'
+        f'<span class="badge badge-flat" style="font-family:\'JetBrains Mono\'">{_rem_txt}</span>'
         f'<span class="badge {_risk_cls}" style="font-family:\'JetBrains Mono\'">'
-        f'{"翻轉風險↑" if _cyc["flip_risk"]=="high" else "留意" if _cyc["flip_risk"]=="medium" else "穩定"}'
+        f'{"⚠️翻轉風險" if _cyc["flip_risk"]=="high" else "留意" if _cyc["flip_risk"]=="medium" else "穩定"}'
         f' {_cyc["dist_pct"]:+.1f}%</span>'
     )
 else:
@@ -918,8 +923,8 @@ with tab5:
   </div>
 
   <div style="margin:10px 0 4px;font-size:0.68rem;color:var(--muted)">
-    目前進度 vs 歷史同向均值 ({_cyc2["avg_same_days"]} 天)
-    — {"⚠️ 已超過歷史均值，週期延長中" if _over_avg else f"歷史均值剩餘估計 {_cyc2['avg_same_days'] - _cyc2['days_in_cycle']} 天"}
+    目前進度 vs 歷史同向均值（過濾雜訊後）：上漲均 {_cyc2["avg_up_days"]} 天 / 下跌均 {_cyc2["avg_dn_days"]} 天
+    — {"⚠️ 已超過均值，週期延長中，留意翻轉" if _over_avg else f"估計剩餘 {_cyc2['est_remaining']} 天（依歷史均值）"}
   </div>
   <div class="wbar-bg">
     <div class="wbar-fill" style="width:{_bar_w}%;background:{_bar_col}"></div>

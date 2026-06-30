@@ -230,19 +230,24 @@ def fetch_taiex_cycle() -> dict | None:
 
         cycle_start = df.index[len(df) - days_in_cycle]
 
-        # 歷史週期長度統計（排除目前進行中的）
-        cycle_lengths = []
+        # 歷史週期長度統計（排除目前進行中的，並過濾 < 5 天的雜訊假突破）
+        MIN_CYCLE = 5  # 小於此天數視為雜訊不納入統計
+        up_lens, dn_lens = [], []
         curr_len, curr_p = 1, phase_arr[0]
-        for i in range(1, len(phase_arr)):
+        for i in range(1, len(phase_arr) - days_in_cycle):  # 排除目前進行中
             if phase_arr[i] == curr_p:
                 curr_len += 1
             else:
-                cycle_lengths.append(curr_len)
+                if curr_len >= MIN_CYCLE:
+                    (up_lens if curr_p == 1 else dn_lens).append(curr_len)
                 curr_len, curr_p = 1, phase_arr[i]
-        avg_cycle = int(sum(cycle_lengths) / len(cycle_lengths)) if cycle_lengths else 30
-        # 同方向週期均值（每隔一個取，因上/下交替）
-        same_dir = cycle_lengths[::2] if len(cycle_lengths) >= 2 else cycle_lengths
-        avg_same = int(sum(same_dir) / len(same_dir)) if same_dir else avg_cycle
+        if curr_len >= MIN_CYCLE:
+            (up_lens if curr_p == 1 else dn_lens).append(curr_len)
+
+        avg_up = int(sum(up_lens) / len(up_lens)) if up_lens else 50
+        avg_dn = int(sum(dn_lens) / len(dn_lens)) if dn_lens else 20
+        avg_same = avg_up if current_phase == 1 else avg_dn
+        est_remaining = max(0, avg_same - days_in_cycle)
 
         close   = float(last["Close"])
         sma20   = float(last["SMA20"])
@@ -286,8 +291,10 @@ def fetch_taiex_cycle() -> dict | None:
             "flip_msg":       flip_msg,
             "macd":           round(macd_v, 1),
             "hist":           round(hist_v, 1),
-            "avg_cycle_days": avg_cycle,
+            "avg_up_days":    avg_up,
+            "avg_dn_days":    avg_dn,
             "avg_same_days":  avg_same,
+            "est_remaining":  est_remaining,
             "high52w":        round(high52, 0),
             "low52w":         round(low52, 0),
         }
