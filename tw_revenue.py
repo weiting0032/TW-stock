@@ -254,6 +254,7 @@ def get_revenue_signals(conn: sqlite3.Connection) -> pd.DataFrame:
         )
         SELECT
             a.stock_id,
+            a.year_month,
             a.yoy_pct,
             a.mom_pct,
             b.yoy_pct AS prev_yoy

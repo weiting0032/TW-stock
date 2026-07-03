@@ -568,9 +568,15 @@ with tab2:
                 badges += f'<span class="badge badge-down" style="margin-left:4px">營收轉機</span>'
             return badges
 
+        _opt_all = "全部"
+        _nc, _ = st.columns([1, 3])
+        _show_n = _nc.selectbox("卡片顯示檔數", [20, 50, 100, _opt_all],
+                                index=0, key="scan_show_n")
+        _show_n = 10 ** 9 if _show_n == _opt_all else int(_show_n)
+
         if buys:
             st.markdown(f'<div class="qsec">🟥 買進機會 ({len(buys)} 檔)</div>', unsafe_allow_html=True)
-            for i, c in enumerate(buys[:20], 1):
+            for i, c in enumerate(buys[:_show_n], 1):
                 reason_short = "、".join(c["reasons"][:3]) if c["reasons"] else "—"
                 _ebadges = _extra_badges(c["代碼"])
                 st.markdown(f"""
@@ -619,7 +625,7 @@ with tab2:
 
         if holds:
             st.markdown(f'<div class="qsec">🟡 續抱觀察 ({len(holds)} 檔)</div>', unsafe_allow_html=True)
-            for c in holds[:10]:
+            for c in holds[:_show_n]:
                 st.markdown(f"""
 <div class="sk-card">
   <div class="sk-rank">＝</div>
@@ -679,11 +685,15 @@ with tab2:
             merged["streak"] = merged["streak"].fillna(0).astype(int)
 
             if not _rev_df.empty:
+                _rev_cols = [c for c in
+                             ["stock_id", "year_month", "yoy_pct", "mom_pct", "turnaround"]
+                             if c in _rev_df.columns]
                 merged = merged.merge(
-                    _rev_df[["stock_id", "yoy_pct", "mom_pct", "turnaround"]],
+                    _rev_df[_rev_cols],
                     on="stock_id", how="left",
                 )
             else:
+                merged["year_month"] = "—"
                 merged["yoy_pct"]    = float("nan")
                 merged["mom_pct"]    = float("nan")
                 merged["turnaround"] = False
@@ -733,11 +743,13 @@ with tab2:
                 _latest_inst = _status2.get("inst_flow", {}).get("latest_date") or "—"
                 st.caption(f"共命中 {len(_cpd)} 檔 | 法人資料最新日期：{_latest_inst}")
 
-                _disp_cols = ["stock_id", "名稱", "f_net_k", "t_net_k", "streak", "yoy_pct", "mom_pct", "turnaround"]
+                _disp_cols = ["stock_id", "名稱", "f_net_k", "t_net_k", "streak",
+                              "year_month", "yoy_pct", "mom_pct", "turnaround"]
                 _disp_cols_exist = [c for c in _disp_cols if c in _cpd.columns]
                 _rename_map = {
                     "stock_id": "代號", "f_net_k": f"外資{_inst_days}日(張)",
                     "t_net_k": f"投信{_inst_days}日(張)", "streak": "投信連買",
+                    "year_month": "營收月份",
                     "yoy_pct": "最新YoY%", "mom_pct": "MoM%", "turnaround": "轉機",
                 }
                 st.dataframe(
@@ -888,9 +900,11 @@ with tab3:
                                             config={"displayModeBar": False})
                         # 最新月 metrics
                         _last_rev = _rev_df.iloc[-1]
+                        _ym = str(_last_rev.get("year_month") or "")
+                        _ym_sfx = f"（{_ym}）" if _ym else ""
                         _r1, _r2, _r3 = st.columns(3)
-                        _r1.metric("最新月 YoY%",  f"{_last_rev['yoy_pct']:+.1f}%" if _last_rev['yoy_pct'] is not None else "—")
-                        _r2.metric("最新月 MoM%",  f"{_last_rev['mom_pct']:+.1f}%" if _last_rev['mom_pct'] is not None else "—")
+                        _r1.metric(f"YoY%{_ym_sfx}",  f"{_last_rev['yoy_pct']:+.1f}%" if _last_rev['yoy_pct'] is not None else "—")
+                        _r2.metric(f"MoM%{_ym_sfx}",  f"{_last_rev['mom_pct']:+.1f}%" if _last_rev['mom_pct'] is not None else "—")
                         _cum = _last_rev.get("cum_yoy_pct")
                         _r3.metric("累計 YoY%",    f"{_cum:+.1f}%" if _cum is not None and not pd.isna(_cum) else "—")
                 except Exception as _ex:
