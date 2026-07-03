@@ -1,5 +1,6 @@
 """UI 輔助函數與圖表生成（純 Plotly/HTML，無 Streamlit 依賴）"""
 from datetime import datetime
+from typing import Optional
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -199,6 +200,111 @@ def make_breadth_gauge(ad_ratio: float) -> go.Figure:
     ))
     _apply_dark_layout(fig, height=220)
     fig.update_layout(margin=dict(l=20, r=20, t=40, b=10))
+    return fig
+
+
+# ── 法人籌碼圖：外資/投信 grouped bar + 三大合計累積折線 ─────────────────────
+
+def make_inst_flow_chart(df: pd.DataFrame) -> Optional[go.Figure]:
+    """
+    輸入 get_inst_flow() 的結果 DataFrame。
+    外資/投信 grouped bar（單位：張＝股/1000）+ 三大合計累積折線（secondary_y）。
+    """
+    if df is None or df.empty:
+        return None
+
+    dates = df["trade_date"].astype(str)
+    f_net = (df["foreign_net"] / 1000).round(0)
+    t_net = (df["trust_net"]  / 1000).round(0)
+    total = (df["total_net"]  / 1000).round(0)
+    cum_total = total.cumsum()
+
+    def _bar_colors(series):
+        return ["#E8192C" if v >= 0 else "#00B050" for v in series]
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    fig.add_trace(go.Bar(
+        x=dates, y=f_net, name="外資(張)",
+        marker_color=_bar_colors(f_net),
+        marker_opacity=0.85, offsetgroup=0,
+    ), secondary_y=False)
+
+    fig.add_trace(go.Bar(
+        x=dates, y=t_net, name="投信(張)",
+        marker_color=_bar_colors(t_net),
+        marker_opacity=0.65, offsetgroup=1,
+    ), secondary_y=False)
+
+    fig.add_trace(go.Scatter(
+        x=dates, y=cum_total, name="三大累積(張)",
+        line=dict(color="#F5A623", width=1.8),
+        mode="lines",
+    ), secondary_y=True)
+
+    fig.update_layout(
+        template="plotly_dark", height=320,
+        margin=dict(l=0, r=0, t=28, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        barmode="group",
+        showlegend=True,
+        legend=dict(orientation="h", y=1.12, x=0, font=dict(size=9)),
+        font=dict(family="JetBrains Mono", size=9),
+    )
+    fig.update_yaxes(title_text="買賣超(張)", secondary_y=False,
+                     gridcolor="rgba(255,255,255,0.04)")
+    fig.update_yaxes(title_text="累積(張)", secondary_y=True,
+                     gridcolor="rgba(255,255,255,0.02)")
+    return fig
+
+
+# ── 月營收圖：月營收 bar + YoY% 折線 ─────────────────────────────────────────
+
+def make_revenue_chart(df: pd.DataFrame) -> Optional[go.Figure]:
+    """
+    輸入 get_revenue_history() 的結果 DataFrame。
+    月營收 bar（億元）+ YoY% 折線（secondary_y）+ y=0 虛線。
+    """
+    if df is None or df.empty:
+        return None
+
+    x    = df["year_month"].astype(str)
+    rev  = df["revenue"] / 1e5  # 千元 → 億元
+    yoy  = df["yoy_pct"]
+
+    rev_colors = ["#E8192C" if (yoy.iloc[i] or 0) >= 0 else "#5A6072"
+                  for i in range(len(rev))]
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    fig.add_trace(go.Bar(
+        x=x, y=rev, name="月營收(億)",
+        marker_color=rev_colors, marker_opacity=0.8,
+    ), secondary_y=False)
+
+    fig.add_trace(go.Scatter(
+        x=x, y=yoy, name="YoY%",
+        line=dict(color="#3D8EFF", width=2),
+        mode="lines+markers",
+        marker=dict(size=4),
+    ), secondary_y=True)
+
+    # y=0 虛線
+    fig.add_hline(y=0, line_dash="dot", line_color="rgba(255,255,255,0.25)",
+                  secondary_y=True)
+
+    fig.update_layout(
+        template="plotly_dark", height=320,
+        margin=dict(l=0, r=0, t=28, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=True,
+        legend=dict(orientation="h", y=1.12, x=0, font=dict(size=9)),
+        font=dict(family="JetBrains Mono", size=9),
+    )
+    fig.update_yaxes(title_text="月營收(億元)", secondary_y=False,
+                     gridcolor="rgba(255,255,255,0.04)")
+    fig.update_yaxes(title_text="YoY%", secondary_y=True,
+                     gridcolor="rgba(255,255,255,0.02)")
     return fig
 
 

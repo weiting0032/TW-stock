@@ -339,3 +339,86 @@ def remove_from_watchlist(symbol: str):
     except Exception:
         pass
     return False
+
+
+# ── 本地 DB 快取封裝（法人籌碼 + 月營收）────────────────────────────────────
+# 注意：sqlite3.Connection 不可雜湊，cached 函式內部自行呼叫 get_conn()
+
+@st.cache_data(ttl=900, show_spinner=False)
+def cached_get_inst_flow(stock_id: str, days: int = 60):
+    """get_inst_flow 快取封裝（TTL=15分鐘）"""
+    try:
+        from tw_db import get_conn
+        from tw_institutional import get_inst_flow
+        conn = get_conn()
+        return get_inst_flow(conn, stock_id, days)
+    except Exception:
+        import pandas as pd
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def cached_get_inst_summary(days: int = 5):
+    """get_inst_summary 快取封裝（TTL=15分鐘）"""
+    try:
+        from tw_db import get_conn
+        from tw_institutional import get_inst_summary
+        conn = get_conn()
+        return get_inst_summary(conn, days)
+    except Exception:
+        import pandas as pd
+        return pd.DataFrame(columns=["stock_id", "f_net", "t_net", "all_net"])
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def cached_get_trust_streak(lookback: int = 15):
+    """get_trust_streak 快取封裝（TTL=15分鐘）"""
+    try:
+        from tw_db import get_conn
+        from tw_institutional import get_trust_streak
+        conn = get_conn()
+        return get_trust_streak(conn, lookback)
+    except Exception:
+        import pandas as pd
+        return pd.DataFrame(columns=["stock_id", "streak"])
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def cached_get_revenue_history(stock_id: str, months: int = 24):
+    """get_revenue_history 快取封裝（TTL=15分鐘）"""
+    try:
+        from tw_db import get_conn
+        from tw_revenue import get_revenue_history
+        conn = get_conn()
+        return get_revenue_history(conn, stock_id, months)
+    except Exception:
+        import pandas as pd
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def cached_get_revenue_signals():
+    """get_revenue_signals 快取封裝（TTL=15分鐘）"""
+    try:
+        from tw_db import get_conn
+        from tw_revenue import get_revenue_signals
+        conn = get_conn()
+        return get_revenue_signals(conn)
+    except Exception:
+        import pandas as pd
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def cached_get_data_status():
+    """get_data_status 快取封裝（TTL=15分鐘）"""
+    try:
+        from tw_db import get_conn
+        from tw_institutional import get_data_status
+        conn = get_conn()
+        return get_data_status(conn)
+    except Exception:
+        return {
+            "inst_flow": {"latest_date": None, "total_rows": 0, "stock_count": 0},
+            "monthly_revenue": {"latest_month": None, "stock_count": 0},
+        }
