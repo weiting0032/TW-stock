@@ -196,6 +196,23 @@ if st.session_state.df_watchlist is None:
 check_and_trigger_auto_scan(MARKET_MAP)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# DB 快照下載（雲端容器 DB 為空時從 GitHub db-snapshot 分支抓基底；
+# 本機已有資料則 0 成本跳過。放在 lazy sync 之前，讓雲端拿到基底後再增量補。）
+# ─────────────────────────────────────────────────────────────────────────────
+if not st.session_state.get("db_snapshot_checked"):
+    st.session_state.db_snapshot_checked = True
+    try:
+        from tw_snapshot import download_snapshot_if_needed
+        _snap = download_snapshot_if_needed()
+        if _snap == "downloaded":
+            cached_get_data_status.clear()
+            st.toast("已從快照載入歷史資料庫", icon="✅")
+        elif _snap:
+            st.toast(_snap, icon="⚠️")
+    except Exception as _e:
+        st.toast(f"快照檢查略過：{_e}", icon="⚠️")
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DB Lazy Sync（每 session 只執行一次）
 # ─────────────────────────────────────────────────────────────────────────────
 if not st.session_state.get("db_lazy_sync_done"):
