@@ -646,10 +646,16 @@ with tab2:
     st.markdown('<hr class="qdiv">', unsafe_allow_html=True)
     with st.expander("🎯 籌碼×營收 複合選股", expanded=False):
         st.caption("籌碼與營收來自本地 DB；此區塊獨立於左側技術面掃描，不修改任何評分邏輯。")
+        st.caption(
+            "📐 預設值為 2 年回測最佳組（2024-07~2026-07、481 交易日、含成本、基準 0050，"
+            "20 日超額 +3.6%／60 日 +14.8%）。回測重點：訊號後持有 20–60 日才是甜蜜區（5–10 日無優勢）；"
+            "「營收轉機」模式全參數實測為負效（勝率 38%），慎用；本因子選股不擇時——"
+            "弱市中絕對報酬可能為負，建議搭配主頁大盤週期在牛市相位執行。"
+        )
 
         _cp1, _cp2 = st.columns(2)
-        _inst_days  = _cp1.slider("法人視窗 N 日", 3, 20, 5, key="compound_inst_days")
-        _min_streak = _cp2.slider("投信連買天數 ≥", 0, 10, 3, key="compound_streak")
+        _inst_days  = _cp1.slider("法人視窗 N 日", 3, 20, 10, key="compound_inst_days")
+        _min_streak = _cp2.slider("投信連買天數 ≥", 0, 10, 5, key="compound_streak")
 
         _cp3, _cp4 = st.columns(2)
         _f_buy_chk  = _cp3.checkbox("外資 N 日淨買超 > 0", value=True, key="compound_f_buy")
@@ -658,7 +664,7 @@ with tab2:
         _rev_mode = st.radio(
             "營收條件",
             ["YoY > 門檻", "營收轉機（YoY 由負轉正）", "兩者任一"],
-            index=2, horizontal=True, key="compound_rev_mode",
+            index=0, horizontal=True, key="compound_rev_mode",
         )
         _yoy_thr = 20.0
         if _rev_mode in ("YoY > 門檻", "兩者任一"):
