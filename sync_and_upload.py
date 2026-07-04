@@ -12,6 +12,7 @@ from datetime import datetime
 
 from tw_db import get_conn
 from tw_institutional import get_data_status, sync_inst_flow
+from tw_prices import sync_daily_prices
 from tw_revenue import sync_monthly_revenue
 from tw_snapshot import make_and_push_snapshot
 
@@ -24,6 +25,7 @@ def main():
     if not push_only:
         conn = get_conn()
         sync_inst_flow(conn)
+        sync_daily_prices(conn)
         sync_monthly_revenue(conn, months_back=2)
         status = get_data_status(conn)
         conn.close()

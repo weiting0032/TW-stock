@@ -12,6 +12,7 @@ import sys
 
 from tw_db import get_conn
 from tw_institutional import get_data_status, sync_inst_flow
+from tw_prices import sync_daily_prices
 from tw_revenue import backfill_revenue
 
 
@@ -35,6 +36,13 @@ def main():
         metavar="M",
         help="Backfill monthly revenue M months (default 0=skip)",
     )
+    parser.add_argument(
+        "--price-days",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Backfill daily prices N calendar days (default 0=skip)",
+    )
     args = parser.parse_args()
 
     conn = get_conn()
@@ -47,6 +55,14 @@ def main():
         print("Institutional backfill done.")
     else:
         print("\n--inst-days=0, skipping institutional backfill.")
+
+    # -- Price backfill --------------------------------------------------------
+    if args.price_days > 0:
+        print(f"\nBackfilling daily prices ({args.price_days} calendar days)...")
+        sync_daily_prices(conn, backfill_days=args.price_days, progress_cb=progress)
+        print("Price backfill done.")
+    else:
+        print("\n--price-days=0, skipping price backfill.")
 
     # -- Revenue backfill ------------------------------------------------------
     if args.revenue_months > 0:

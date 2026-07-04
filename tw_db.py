@@ -66,7 +66,25 @@ CREATE TABLE IF NOT EXISTS holidays (
     date TEXT PRIMARY KEY,
     name TEXT
 );
+
+CREATE TABLE IF NOT EXISTS daily_price (
+    trade_date TEXT NOT NULL,
+    stock_id   TEXT NOT NULL,
+    market     TEXT NOT NULL,
+    open       REAL,
+    high       REAL,
+    low        REAL,
+    close      REAL,
+    volume     INTEGER,   -- 股
+    turnover   INTEGER,   -- 元
+    PRIMARY KEY (trade_date, stock_id)
+);
+CREATE INDEX IF NOT EXISTS idx_price_stock ON daily_price (stock_id, trade_date);
 """
+
+# 快照（給雲端手機用）只帶這些表；daily_price 體積大且雲端用不到，
+# 排除以維持手機冷啟動速度（見 tw_snapshot.make_snapshot）。
+SNAPSHOT_TABLES = ["inst_flow", "monthly_revenue", "sync_log", "holidays"]
 
 
 def get_conn() -> sqlite3.Connection:

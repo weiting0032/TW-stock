@@ -36,17 +36,32 @@ MARKER_PATH = str(DB_PATH) + ".from_snapshot"
 # ── 生產端（本機）────────────────────────────────────────────────────────────
 
 def make_snapshot() -> str:
-    """VACUUM INTO 取得一致性快照（WAL 下安全）再 gzip，回傳 .gz 路徑。"""
+    """
+    產生給雲端的快照：只帶 tw_db.SNAPSHOT_TABLES（排除 daily_price——
+    體積大且雲端 app 不查它，手機冷啟動維持輕量）。
+    以 ATTACH + INSERT SELECT 複製，WAL 下讀取一致；schema 直接沿用
+    tw_db._DDL，保留主鍵讓雲端 lazy sync 的 INSERT OR REPLACE 正常去重。
+    回傳 .gz 路徑。
+    """
+    import tw_db
+
     tmp_dir = tempfile.gettempdir()
     tmp_db = os.path.join(tmp_dir, "tw_market_snapshot.db")
     tmp_gz = os.path.join(tmp_dir, SNAPSHOT_NAME)
-    if os.path.exists(tmp_db):
-        os.remove(tmp_db)
-    conn = sqlite3.connect(str(DB_PATH))
+    for p in (tmp_db, tmp_db + "-wal", tmp_db + "-shm"):
+        if os.path.exists(p):
+            os.remove(p)
+    dst = sqlite3.connect(tmp_db)
     try:
-        conn.execute(f"VACUUM INTO '{tmp_db}'")
+        dst.executescript(tw_db._DDL)
+        dst.execute("PRAGMA journal_mode=DELETE")   # 快照走單檔模式
+        dst.execute("ATTACH DATABASE ? AS src", (str(DB_PATH),))
+        for t in tw_db.SNAPSHOT_TABLES:
+            dst.execute(f"INSERT INTO main.{t} SELECT * FROM src.{t}")
+        dst.commit()
+        dst.execute("DETACH DATABASE src")
     finally:
-        conn.close()
+        dst.close()
     with open(tmp_db, "rb") as fin, gzip.open(tmp_gz, "wb", compresslevel=6) as fout:
         while True:
             chunk = fin.read(1 << 20)
