@@ -67,6 +67,19 @@ CREATE TABLE IF NOT EXISTS holidays (
     name TEXT
 );
 
+CREATE TABLE IF NOT EXISTS dividend_events (
+    ex_date      TEXT NOT NULL,   -- 除權息/拆分生效日
+    stock_id     TEXT NOT NULL,
+    market       TEXT,
+    before_close REAL,            -- 除權息前收盤價
+    ref_price    REAL,            -- 除權息參考價（官方）
+    div_value    REAL,            -- 權值+息值
+    kind         TEXT,            -- 息/權/權息/拆分(推定)
+    factor       REAL,            -- ref/before，還原乘數（乘在 ex_date 之前的價格上）
+    src          TEXT,            -- TWT49U / TPEX_API / detector
+    PRIMARY KEY (ex_date, stock_id)
+);
+
 CREATE TABLE IF NOT EXISTS daily_price (
     trade_date TEXT NOT NULL,
     stock_id   TEXT NOT NULL,

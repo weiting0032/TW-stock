@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from tw_db import get_conn
+from tw_dividends import apply_adjustment, get_adjustment_factors
 
 COST = 0.00585          # 往返成本
 LIQ_MIN = 20_000_000    # 訊號日最低成交金額（元）
@@ -67,13 +68,18 @@ def load_data(conn):
     return px, inst, rev
 
 
-def build_panels(px, inst, rev):
+def build_panels(px, inst, rev, factors=None):
     dates = sorted(px["trade_date"].unique())
     didx = pd.Index(dates, name="trade_date")
 
     open_p = px.pivot(index="trade_date", columns="stock_id", values="open").reindex(didx)
     close_p = px.pivot(index="trade_date", columns="stock_id", values="close").reindex(didx)
     tov_p = px.pivot(index="trade_date", columns="stock_id", values="turnover").reindex(didx)
+
+    # 除權息/拆分還原（開盤與收盤都要調，進出場價才一致）
+    if factors is not None and not factors.empty:
+        open_p = apply_adjustment(open_p, factors)
+        close_p = apply_adjustment(close_p, factors)
 
     f_p = inst.pivot(index="trade_date", columns="stock_id", values="foreign_net") \
               .reindex(didx).fillna(0)
@@ -196,13 +202,15 @@ def main():
 
     conn = get_conn()
     px, inst, rev = load_data(conn)
+    factors = get_adjustment_factors(conn)
     n_days = px["trade_date"].nunique()
-    print(f"price days={n_days}, inst rows={len(inst)}, rev rows={len(rev)}")
+    print(f"price days={n_days}, inst rows={len(inst)}, rev rows={len(rev)}, "
+          f"adj events={len(factors)}")
     if n_days < 80:
         print("價格資料不足（<80 交易日），請先跑 backfill.py --price-days 730")
         sys.exit(1)
 
-    panels = build_panels(px, inst, rev)
+    panels = build_panels(px, inst, rev, factors)
     rets, bench = horizon_returns(panels)
     result = run_grid(panels, rets, bench, min_n=0)
 

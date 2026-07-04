@@ -11,6 +11,7 @@ import sys
 from datetime import datetime
 
 from tw_db import get_conn
+from tw_dividends import sync_dividends
 from tw_institutional import get_data_status, sync_inst_flow
 from tw_prices import sync_daily_prices
 from tw_revenue import sync_monthly_revenue
@@ -26,6 +27,7 @@ def main():
         conn = get_conn()
         sync_inst_flow(conn)
         sync_daily_prices(conn)
+        sync_dividends(conn)
         sync_monthly_revenue(conn, months_back=2)
         status = get_data_status(conn)
         conn.close()
