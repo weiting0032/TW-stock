@@ -439,6 +439,59 @@ def cached_get_revenue_signals():
 
 
 @st.cache_data(ttl=900, show_spinner=False)
+def cached_get_industry_rotation(days: int = 5):
+    """
+    產業輪動視圖（TTL=15分鐘）。
+    回傳 (個股明細 df, 產業聚合 df)：
+    - 明細：stock_id/名稱/產業/close/f_net/t_net(股)/f_amt/t_amt(億,估)/ret20/yoy_pct
+    - 聚合：產業/檔數/外資額(億)/投信額(億)/20日報酬中位/YoY中位/YoY>20比率
+    金額為估算：淨買賣超股數 × 最新收盤價。產業別取 wespai（涵蓋上市櫃）。
+    """
+    import pandas as pd
+    try:
+        from tw_db import get_conn
+        from tw_institutional import get_inst_summary
+        from tw_prices import get_recent_returns
+        from tw_revenue import get_revenue_signals
+
+        mm = get_market_data()
+        if not mm:
+            return pd.DataFrame(), pd.DataFrame()
+        conn = get_conn()
+        s = get_inst_summary(conn, days)
+        r20 = get_recent_returns(conn, 20)
+        rev = get_revenue_signals(conn)[["stock_id", "yoy_pct"]]
+
+        base = pd.DataFrame([
+            {"stock_id": sid, "名稱": v.get("名稱", ""), "產業": v.get("產業", "")}
+            for sid, v in mm.items()
+        ])
+        base = base[base["產業"].astype(str).str.len() > 0]
+        df = (base.merge(s, on="stock_id", how="inner")
+                  .merge(r20, on="stock_id", how="left")
+                  .merge(rev, on="stock_id", how="left"))
+        df["f_amt"] = (df["f_net"] * df["close"] / 1e8).round(2)   # 億
+        df["t_amt"] = (df["t_net"] * df["close"] / 1e8).round(2)
+
+        agg = df.groupby("產業").agg(
+            檔數=("stock_id", "size"),
+            外資額=("f_amt", "sum"),
+            投信額=("t_amt", "sum"),
+            報酬中位=("ret_pct", "median"),
+            YoY中位=("yoy_pct", "median"),
+            強營收比=("yoy_pct", lambda x: (x > 20).mean() * 100),
+        ).reset_index()
+        agg = agg[agg["檔數"] >= 3]
+        for c in ["外資額", "投信額", "報酬中位", "YoY中位", "強營收比"]:
+            agg[c] = agg[c].round(2)
+        agg = agg.sort_values("投信額", ascending=False).reset_index(drop=True)
+        return df, agg
+    except Exception:
+        import pandas as pd
+        return pd.DataFrame(), pd.DataFrame()
+
+
+@st.cache_data(ttl=900, show_spinner=False)
 def cached_get_margin_history(stock_id: str, days: int = 60):
     """get_margin_history 快取封裝（TTL=15分鐘）"""
     try:

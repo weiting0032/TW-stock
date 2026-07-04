@@ -248,6 +248,28 @@ def get_price_history(
     return df.sort_values("trade_date").reset_index(drop=True)
 
 
+def get_recent_returns(conn: sqlite3.Connection, days: int = 20) -> pd.DataFrame:
+    """每檔最新收盤價與近 N 個交易日報酬%（原始價，供產業橫斷面對照用）。"""
+    dates = [r[0] for r in conn.execute(
+        "SELECT DISTINCT trade_date FROM daily_price ORDER BY trade_date")]
+    if len(dates) < days + 1:
+        return pd.DataFrame()
+    d_now, d_prev = dates[-1], dates[-(days + 1)]
+    df = pd.read_sql_query(
+        "SELECT trade_date, stock_id, close FROM daily_price "
+        "WHERE trade_date IN (?, ?) AND close IS NOT NULL",
+        conn, params=(d_now, d_prev))
+    p = df.pivot(index="stock_id", columns="trade_date", values="close")
+    if d_now not in p.columns or d_prev not in p.columns:
+        return pd.DataFrame()
+    out = pd.DataFrame({
+        "stock_id": p.index,
+        "close": p[d_now].values,
+        "ret_pct": ((p[d_now] / p[d_prev] - 1) * 100).round(2).values,
+    }).dropna(subset=["close"])
+    return out.reset_index(drop=True)
+
+
 def get_price_panel(conn: sqlite3.Connection, start: str = None) -> pd.DataFrame:
     """回測用：整段期間全市場長表（trade_date, stock_id, open, close, turnover）。"""
     sql = "SELECT trade_date, stock_id, open, close, turnover FROM daily_price"

@@ -20,6 +20,7 @@ from tw_data import (
     cached_get_inst_flow, cached_get_inst_summary, cached_get_trust_streak,
     cached_get_revenue_history, cached_get_revenue_signals, cached_get_data_status,
     cached_get_signal_journal, cached_get_margin_history, cached_get_tdcc_trend,
+    cached_get_industry_rotation,
 )
 from tw_indicators import detect_candlestick_patterns
 from tw_notifications import format_semi_tg_messages, send_tg_message
@@ -348,8 +349,8 @@ st.markdown("<hr class='qdiv'>", unsafe_allow_html=True)
 # ─────────────────────────────────────────────────────────────────────────────
 # Tabs
 # ─────────────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📊 庫存動態", "💰 潛力快篩", "🔍 個股診斷", "📝 庫存管理", "⚙️ 系統"
+tab1, tab2, tab_ind, tab3, tab4, tab5 = st.tabs([
+    "📊 庫存動態", "💰 潛力快篩", "🏭 產業輪動", "🔍 個股診斷", "📝 庫存管理", "⚙️ 系統"
 ])
 
 
@@ -1425,6 +1426,57 @@ with tab5:
             st.caption(f"統計範圍：{bd['total']} 檔（含持倉 {len(portfolio)} 檔）")
         else:
             st.info("點擊「計算市場廣度」以分析目前持倉與掃描結果的市場強弱。")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB IND: 產業輪動（法人資金流 × 價格動能 × 營收體質，全部來自本地 DB）
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab_ind:
+    _rot_days = st.radio("法人資金流視窗", [5, 20], index=0, horizontal=True,
+                         key="rot_days", format_func=lambda x: f"近 {x} 日")
+    try:
+        _rot_detail, _rot_agg = cached_get_industry_rotation(days=_rot_days)
+        if _rot_agg is None or _rot_agg.empty:
+            st.info("產業資料尚未就緒（需本地 DB 法人/價格資料與 wespai 產業別）。")
+        else:
+            _status_rot = cached_get_data_status()
+            _rot_latest = _status_rot.get("inst_flow", {}).get("latest_date") or "—"
+            st.caption(f"法人資料基準日：{_rot_latest}｜金額為估算（買賣超股數×最新收盤）｜"
+                       f"報酬=近20日原始價｜YoY 取產業內個股中位數")
+
+            _top_buy  = _rot_agg.head(3)["產業"].tolist()
+            _top_sell = _rot_agg.tail(3).sort_values("投信額")["產業"].tolist()
+            st.markdown(
+                f"**投信{_rot_days}日買最多**：{'、'.join(_top_buy)}　｜　"
+                f"**賣最多**：{'、'.join(_top_sell)}")
+
+            _rot_view = _rot_agg.rename(columns={
+                "外資額": f"外資{_rot_days}日(億)", "投信額": f"投信{_rot_days}日(億)",
+                "報酬中位": "20日報酬中位%", "YoY中位": "營收YoY中位%",
+                "強營收比": "YoY>20%家數比",
+            })
+            st.dataframe(_rot_view, use_container_width=True, hide_index=True,
+                         height=420)
+
+            st.markdown('<div class="qsec">🔬 產業成分股</div>', unsafe_allow_html=True)
+            _ind_pick = st.selectbox("選擇產業", _rot_agg["產業"].tolist(),
+                                     key="rot_ind_pick")
+            _mem = _rot_detail[_rot_detail["產業"] == _ind_pick].copy()
+            if not _mem.empty:
+                _stk_df = cached_get_trust_streak(lookback=15)
+                _stk_map = dict(zip(_stk_df["stock_id"], _stk_df["streak"])) \
+                    if not _stk_df.empty else {}
+                _mem["投信連買"] = _mem["stock_id"].map(_stk_map).fillna(0).astype(int)
+                _mem["外資(張)"] = (_mem["f_net"] / 1000).round(0).astype(int)
+                _mem["投信(張)"] = (_mem["t_net"] / 1000).round(0).astype(int)
+                _mem_view = _mem[["stock_id", "名稱", "close", "外資(張)", "投信(張)",
+                                  "投信連買", "yoy_pct", "ret_pct"]].rename(columns={
+                    "stock_id": "代號", "close": "現價",
+                    "yoy_pct": "營收YoY%", "ret_pct": "20日報酬%"})
+                _mem_view = _mem_view.sort_values("投信(張)", ascending=False)
+                st.dataframe(_mem_view, use_container_width=True, hide_index=True)
+    except Exception as _re:
+        st.info(f"產業輪動查詢失敗：{_re}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
