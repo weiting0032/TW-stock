@@ -56,8 +56,11 @@ def make_snapshot() -> str:
         dst.executescript(tw_db._DDL)
         dst.execute("PRAGMA journal_mode=DELETE")   # 快照走單檔模式
         dst.execute("ATTACH DATABASE ? AS src", (str(DB_PATH),))
-        for t in tw_db.SNAPSHOT_TABLES:
-            dst.execute(f"INSERT INTO main.{t} SELECT * FROM src.{t}")
+        for t, where in tw_db.SNAPSHOT_TABLES.items():
+            sql = f"INSERT INTO main.{t} SELECT * FROM src.{t}"
+            if where:
+                sql += f" WHERE {where}"
+            dst.execute(sql)
         dst.commit()
         dst.execute("DETACH DATABASE src")
     finally:

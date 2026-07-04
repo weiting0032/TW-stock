@@ -97,6 +97,29 @@ CREATE TABLE IF NOT EXISTS dividend_events (
     PRIMARY KEY (ex_date, stock_id)
 );
 
+CREATE TABLE IF NOT EXISTS margin_trading (
+    trade_date TEXT NOT NULL,
+    stock_id   TEXT NOT NULL,
+    market     TEXT NOT NULL,
+    margin_buy INTEGER, margin_sell INTEGER, margin_redeem INTEGER,
+    margin_balance INTEGER, margin_prev INTEGER, margin_quota INTEGER,
+    short_buy INTEGER, short_sell INTEGER, short_redeem INTEGER,
+    short_balance INTEGER, short_prev INTEGER, short_quota INTEGER,
+    offset_lots INTEGER,               -- 資券互抵；全表單位：張
+    PRIMARY KEY (trade_date, stock_id)
+);
+CREATE INDEX IF NOT EXISTS idx_margin_stock ON margin_trading (stock_id, trade_date);
+
+CREATE TABLE IF NOT EXISTS tdcc_dispersion (
+    data_date TEXT NOT NULL,           -- 每週五
+    stock_id  TEXT NOT NULL,
+    level     INTEGER NOT NULL,        -- 持股分級 1-15,16=調整,17=合計
+    holders   INTEGER,
+    shares    INTEGER,
+    pct       REAL,
+    PRIMARY KEY (data_date, stock_id, level)
+);
+
 CREATE TABLE IF NOT EXISTS daily_price (
     trade_date TEXT NOT NULL,
     stock_id   TEXT NOT NULL,
@@ -112,10 +135,19 @@ CREATE TABLE IF NOT EXISTS daily_price (
 CREATE INDEX IF NOT EXISTS idx_price_stock ON daily_price (stock_id, trade_date);
 """
 
-# 快照（給雲端手機用）只帶這些表；daily_price 體積大且雲端用不到，
-# 排除以維持手機冷啟動速度（見 tw_snapshot.make_snapshot）。
-SNAPSHOT_TABLES = ["inst_flow", "monthly_revenue", "sync_log", "holidays",
-                   "signal_log", "stock_names"]
+# 快照（給雲端手機用）帶哪些表：{表名: WHERE 條件或 None}。
+# daily_price 體積大且雲端不查 → 不帶；margin_trading 只帶近 130 天切片
+#（診斷圖顯示 60 天，留緩衝）。見 tw_snapshot.make_snapshot。
+SNAPSHOT_TABLES = {
+    "inst_flow": None,
+    "monthly_revenue": None,
+    "sync_log": None,
+    "holidays": None,
+    "signal_log": None,
+    "stock_names": None,
+    "tdcc_dispersion": None,
+    "margin_trading": "trade_date >= date('now','-130 days')",
+}
 
 
 def get_conn() -> sqlite3.Connection:

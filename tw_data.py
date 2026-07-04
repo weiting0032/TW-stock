@@ -410,6 +410,32 @@ def cached_get_revenue_signals():
 
 
 @st.cache_data(ttl=900, show_spinner=False)
+def cached_get_margin_history(stock_id: str, days: int = 60):
+    """get_margin_history 快取封裝（TTL=15分鐘）"""
+    try:
+        from tw_db import get_conn
+        from tw_margin import get_margin_history
+        conn = get_conn()
+        return get_margin_history(conn, stock_id, days)
+    except Exception:
+        import pandas as pd
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_get_tdcc_trend(stock_id: str):
+    """get_tdcc_trend 快取封裝（週頻資料，TTL=1小時）"""
+    try:
+        from tw_db import get_conn
+        from tw_tdcc import get_tdcc_trend
+        conn = get_conn()
+        return get_tdcc_trend(conn, stock_id)
+    except Exception:
+        import pandas as pd
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=900, show_spinner=False)
 def cached_get_signal_journal():
     """訊號日誌（樣本外追蹤）快取封裝（TTL=15分鐘）"""
     try:

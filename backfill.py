@@ -43,6 +43,13 @@ def main():
         metavar="N",
         help="Backfill daily prices N calendar days (default 0=skip)",
     )
+    parser.add_argument(
+        "--margin-days",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Backfill margin trading N calendar days (default 0=skip)",
+    )
     args = parser.parse_args()
 
     conn = get_conn()
@@ -63,6 +70,13 @@ def main():
         print("Price backfill done.")
     else:
         print("\n--price-days=0, skipping price backfill.")
+
+    # -- Margin backfill -------------------------------------------------------
+    if args.margin_days > 0:
+        from tw_margin import sync_margin
+        print(f"\nBackfilling margin trading ({args.margin_days} calendar days)...")
+        sync_margin(conn, backfill_days=args.margin_days, progress_cb=progress)
+        print("Margin backfill done.")
 
     # -- Revenue backfill ------------------------------------------------------
     if args.revenue_months > 0:

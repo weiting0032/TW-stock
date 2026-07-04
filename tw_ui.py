@@ -258,6 +258,72 @@ def make_inst_flow_chart(df: pd.DataFrame) -> Optional[go.Figure]:
     return fig
 
 
+# ── 融資券圖：融資餘額 bar + 券資比% 折線 ────────────────────────────────────
+
+def make_margin_chart(df: pd.DataFrame) -> Optional[go.Figure]:
+    """輸入 get_margin_history() 結果（單位：張，含 short_margin_ratio 衍生欄）。"""
+    if df is None or df.empty:
+        return None
+    dates = df["trade_date"].astype(str)
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Bar(
+        x=dates, y=df["margin_balance"], name="融資餘額(張)",
+        marker_color="#4A7BA6", marker_opacity=0.85,
+    ), secondary_y=False)
+    fig.add_trace(go.Scatter(
+        x=dates, y=df["short_margin_ratio"], name="券資比%",
+        line=dict(color="#F5A623", width=1.8), mode="lines",
+    ), secondary_y=True)
+    fig.update_layout(
+        template="plotly_dark", height=300,
+        margin=dict(l=0, r=0, t=28, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=True,
+        legend=dict(orientation="h", y=1.12, x=0, font=dict(size=9)),
+        font=dict(family="JetBrains Mono", size=9),
+    )
+    fig.update_yaxes(title_text="融資餘額(張)", secondary_y=False,
+                     gridcolor="rgba(255,255,255,0.04)")
+    fig.update_yaxes(title_text="券資比%", secondary_y=True,
+                     gridcolor="rgba(255,255,255,0.02)")
+    return fig
+
+
+# ── 集保大戶比圖：週頻 大戶/千張比 折線 + 股東人數 ───────────────────────────
+
+def make_tdcc_chart(df: pd.DataFrame) -> Optional[go.Figure]:
+    """輸入 get_tdcc_trend() 結果（每週五一點）。"""
+    if df is None or df.empty:
+        return None
+    dates = df["data_date"].astype(str)
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Scatter(
+        x=dates, y=df["big400_pct"], name="大戶>400張比%",
+        line=dict(color="#E8192C", width=1.8), mode="lines+markers",
+    ), secondary_y=False)
+    fig.add_trace(go.Scatter(
+        x=dates, y=df["big1000_pct"], name="千張大戶比%",
+        line=dict(color="#F5A623", width=1.5, dash="dot"), mode="lines+markers",
+    ), secondary_y=False)
+    fig.add_trace(go.Scatter(
+        x=dates, y=df["total_holders"], name="總股東人數",
+        line=dict(color="#5A6072", width=1.2), mode="lines+markers",
+    ), secondary_y=True)
+    fig.update_layout(
+        template="plotly_dark", height=300,
+        margin=dict(l=0, r=0, t=28, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=True,
+        legend=dict(orientation="h", y=1.12, x=0, font=dict(size=9)),
+        font=dict(family="JetBrains Mono", size=9),
+    )
+    fig.update_yaxes(title_text="持股比%", secondary_y=False,
+                     gridcolor="rgba(255,255,255,0.04)")
+    fig.update_yaxes(title_text="股東人數", secondary_y=True,
+                     gridcolor="rgba(255,255,255,0.02)")
+    return fig
+
+
 # ── 月營收圖：月營收 bar + YoY% 折線 ─────────────────────────────────────────
 
 def make_revenue_chart(df: pd.DataFrame) -> Optional[go.Figure]:

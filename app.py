@@ -19,7 +19,7 @@ from tw_data import (
     get_gsheet_client, PORTFOLIO_SHEET_TITLE,
     cached_get_inst_flow, cached_get_inst_summary, cached_get_trust_streak,
     cached_get_revenue_history, cached_get_revenue_signals, cached_get_data_status,
-    cached_get_signal_journal,
+    cached_get_signal_journal, cached_get_margin_history, cached_get_tdcc_trend,
 )
 from tw_indicators import detect_candlestick_patterns
 from tw_notifications import format_semi_tg_messages, send_tg_message
@@ -37,6 +37,7 @@ from tw_ui import (
     make_tw_chart, make_weekly_chart, pl_colour,
     score_bar_html, signal_badge_html,
     make_inst_flow_chart, make_revenue_chart,
+    make_margin_chart, make_tdcc_chart,
 )
 
 _TW = pytz.timezone("Asia/Taipei")
@@ -909,7 +910,8 @@ with tab3:
         _diag_code = st.session_state.get("diag_code", "")
         if _diag_code:
             st.markdown('<div class="qsec">籌碼與營收</div>', unsafe_allow_html=True)
-            _inst_tab, _rev_tab = st.tabs(["📊 法人籌碼", "💰 月營收"])
+            _inst_tab, _margin_tab, _rev_tab = st.tabs(
+                ["📊 法人籌碼", "🧮 融資券·大戶", "💰 月營收"])
 
             with _inst_tab:
                 try:
@@ -935,6 +937,57 @@ with tab3:
                         _i3.metric("投信連買天數",       str(_streak))
                 except Exception as _ex:
                     st.info(f"法人資料查詢失敗：{_ex}")
+
+            with _margin_tab:
+                try:
+                    _mg = cached_get_margin_history(_diag_code, days=60)
+                    if _mg is None or _mg.empty:
+                        st.info(f"本地 DB 尚無 {_diag_code} 的融資券資料（歷史回補進行中）。")
+                    else:
+                        _mg_fig = make_margin_chart(_mg)
+                        if _mg_fig:
+                            st.plotly_chart(_mg_fig, use_container_width=True,
+                                            config={"displayModeBar": False})
+                        _m_last = _mg.iloc[-1]
+                        _m_ref  = _mg.iloc[-6] if len(_mg) >= 6 else _mg.iloc[0]
+                        _m1, _m2, _m3 = st.columns(3)
+                        _m1.metric("融資餘額(張)", f"{int(_m_last['margin_balance']):,}",
+                                   delta=f"{int(_m_last['margin_balance'] - _m_ref['margin_balance']):+,}／5日")
+                        _m2.metric("券資比",
+                                   f"{_m_last['short_margin_ratio']:.1f}%"
+                                   if pd.notna(_m_last["short_margin_ratio"]) else "—")
+                        _m3.metric("資使用率",
+                                   f"{_m_last['margin_util']:.1f}%"
+                                   if pd.notna(_m_last["margin_util"]) else "—")
+                        if pd.notna(_m_last["margin_util"]) and _m_last["margin_util"] >= 15:
+                            st.caption("⚠️ 資使用率偏高：籌碼浮動，回檔時融資多殺多風險上升"
+                                       "（與評分因子的融資率警示同源）。")
+
+                    st.markdown("###### 集保大戶比（每週五快照）")
+                    _td = cached_get_tdcc_trend(_diag_code)
+                    if _td is None or _td.empty:
+                        st.caption("尚無集保資料——每週五自動累積，數週後可見趨勢。")
+                    else:
+                        _t_last = _td.iloc[-1]
+                        _t_ref  = _td.iloc[-2] if len(_td) >= 2 else None
+                        _td1, _td2, _td3 = st.columns(3)
+                        _td1.metric("大戶(>400張)比", f"{_t_last['big400_pct']:.1f}%",
+                                    delta=(f"{_t_last['big400_pct'] - _t_ref['big400_pct']:+.2f}pp／週"
+                                           if _t_ref is not None else None))
+                        _td2.metric("千張大戶比", f"{_t_last['big1000_pct']:.1f}%")
+                        _td3.metric("總股東人數", f"{int(_t_last['total_holders']):,}",
+                                    delta=(f"{int(_t_last['total_holders'] - _t_ref['total_holders']):+,}／週"
+                                           if _t_ref is not None else None))
+                        if len(_td) >= 2:
+                            _td_fig = make_tdcc_chart(_td)
+                            if _td_fig:
+                                st.plotly_chart(_td_fig, use_container_width=True,
+                                                config={"displayModeBar": False})
+                        else:
+                            st.caption(f"目前僅 {_td['data_date'].iloc[-1]} 一週資料，"
+                                       "趨勢圖將於下週自動出現。")
+                except Exception as _ex:
+                    st.info(f"融資券／集保資料查詢失敗：{_ex}")
 
             with _rev_tab:
                 try:
