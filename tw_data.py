@@ -57,8 +57,10 @@ def load_watchlist() -> pd.DataFrame:
 def get_market_data() -> dict:
     url = "https://stock.wespai.com/lists"
     try:
+        import io as _io
         res  = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-        data = pd.read_html(res.text)[0].iloc[:, [0, 1, 2, 3, 4, 8, 9, 10, 11, 14, 15, 17]].copy()
+        # pandas>=3 不再接受字面 HTML 字串（會當成檔案路徑），必須包 StringIO
+        data = pd.read_html(_io.StringIO(res.text))[0].iloc[:, [0, 1, 2, 3, 4, 8, 9, 10, 11, 14, 15, 17]].copy()
         data.columns = ["代碼", "名稱", "產業", "現價", "漲跌幅", "投信", "外資", "自營", "三大合計", "PE", "PB", "融資率"]
         data["代碼"] = data["代碼"].astype(str).str.zfill(4)
         data["現價"] = pd.to_numeric(data["現價"], errors="coerce")
@@ -72,7 +74,34 @@ def get_market_data() -> dict:
         data["融資率"] = pd.to_numeric(
             data["融資率"].astype(str).str.replace("%", "", regex=False), errors="coerce"
         ).fillna(0.0)
-        return data.set_index("代碼").to_dict("index")
+        records = data.set_index("代碼").to_dict("index")
+
+        # DB 籌碼強化欄位（法人因子新版輸入；A/B 回放驗證 2026-07-05 採用）。
+        # DB 缺失/查詢失敗時安靜跳過 → get_strategy 自動走 wespai 舊版 fallback。
+        try:
+            from tw_db import get_conn
+            from tw_institutional import get_inst_summary, get_trust_streak
+            _conn = get_conn()
+            _sum = get_inst_summary(_conn, days=5)
+            _stk = get_trust_streak(_conn, lookback=15)
+            _f = dict(zip(_sum["stock_id"], _sum["f_net"] / 1000))
+            _t = dict(zip(_sum["stock_id"], _sum["t_net"] / 1000))
+            _s = dict(zip(_stk["stock_id"], _stk["streak"]))
+            _mu = dict(_conn.execute(
+                "SELECT stock_id, CAST(margin_balance AS REAL)/NULLIF(margin_quota,0)*100 "
+                "FROM margin_trading WHERE trade_date="
+                "(SELECT MAX(trade_date) FROM margin_trading)"))
+            for _sid, _rec in records.items():
+                if _sid in _f:
+                    _rec["f_net_5d"] = int(round(_f[_sid]))
+                    _rec["t_net_5d"] = int(round(_t.get(_sid, 0)))
+                    _rec["trust_streak"] = int(_s.get(_sid, 0))
+                _u = _mu.get(_sid)
+                if _u is not None:
+                    _rec["margin_util"] = round(float(_u), 1)
+        except Exception:
+            pass
+        return records
     except Exception as e:
         st.error(f"市場報價抓取失敗: {e}")
         return {}

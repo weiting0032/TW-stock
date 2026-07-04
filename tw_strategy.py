@@ -132,18 +132,40 @@ def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0,
 
     # 10. Institutional flow（三大法人 + 融資警示）
     if market_info:
-        if inst_net > 500:
-            score += 1.0; reasons.append(f"法人大幅買超{int(inst_net)}張")
-        elif inst_net > 100:
-            score += 0.5; reasons.append(f"法人買超{int(inst_net)}張")
-        elif inst_net < -500:
-            score -= 1.0; warnings.append(f"法人大幅賣超{int(abs(inst_net))}張")
-        elif inst_net < -100:
-            score -= 0.5; warnings.append(f"法人賣超{int(abs(inst_net))}張")
-        if margin_rate > 20.0:
-            score -= 1.0; warnings.append(f"融資率過高({margin_rate:.1f}%)")
-        elif margin_rate > 15.0:
-            score -= 0.5; warnings.append(f"融資率偏高({margin_rate:.1f}%)")
+        f5 = market_info.get("f_net_5d")   # 外資近5日淨買超（張，來自本地 DB）
+        t5 = market_info.get("t_net_5d")   # 投信近5日淨買超（張）
+        if f5 is not None and t5 is not None:
+            # 新版（2026-07）：DB 真實 5 日序列取代 wespai 當日快照，
+            # 邏輯與複合選股同源（外資投信同買 + 投信連買，均經回測驗證）
+            f5, t5 = float(f5), float(t5)
+            streak5 = int(market_info.get("trust_streak", 0) or 0)
+            if f5 > 0 and t5 > 0:
+                score += 1.0; reasons.append("外資投信5日同買")
+            elif f5 + t5 > 500:
+                score += 0.5; reasons.append(f"法人5日淨買超{int(f5 + t5)}張")
+            elif f5 < 0 and t5 < 0:
+                score -= 1.0; warnings.append("外資投信5日同賣")
+            elif f5 + t5 < -500:
+                score -= 0.5; warnings.append(f"法人5日淨賣超{int(abs(f5 + t5))}張")
+            if streak5 >= 3:
+                score += 0.5; reasons.append(f"投信連買{streak5}日")
+        else:
+            # 舊版 fallback：無 DB 序列時維持原行為（wespai 當日快照）
+            if inst_net > 500:
+                score += 1.0; reasons.append(f"法人大幅買超{int(inst_net)}張")
+            elif inst_net > 100:
+                score += 0.5; reasons.append(f"法人買超{int(inst_net)}張")
+            elif inst_net < -500:
+                score -= 1.0; warnings.append(f"法人大幅賣超{int(abs(inst_net))}張")
+            elif inst_net < -100:
+                score -= 0.5; warnings.append(f"法人賣超{int(abs(inst_net))}張")
+        # 融資警示：優先用 DB 資使用率（margin_trading），否則 wespai 融資率
+        _mrate = market_info.get("margin_util")
+        _mrate = margin_rate if _mrate is None else float(_mrate)
+        if _mrate > 20.0:
+            score -= 1.0; warnings.append(f"融資使用率過高({_mrate:.1f}%)")
+        elif _mrate > 15.0:
+            score -= 0.5; warnings.append(f"融資使用率偏高({_mrate:.1f}%)")
 
     score       = max(0.0, min(10.0, score))
     reason_str  = "、".join(reasons[:4]) if reasons else "無明顯因子"
