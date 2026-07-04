@@ -536,7 +536,9 @@ with tab2:
         candidates, _ = run_scan(MARKET_MAP, scan_list, min_score,
                                   max_workers=max_workers_ui, status_placeholder=progress)
         progress.empty()
-        candidates.sort(key=lambda x: -x["score"])
+        # 排序依 2 年回測校準（score_decile_backtest）：0–7 分預測力單調遞增、
+        # 8 分以上為過熱區（20 日期望轉負）→ 未過熱者先按分數排，過熱組整段置後
+        candidates.sort(key=lambda x: (x["score"] >= 8.0, -x["score"]))
         st.session_state.scan_results    = candidates
         st.session_state.tab2_chart_sym  = ""
         st.session_state.tab2_chart_data = None
@@ -559,8 +561,11 @@ with tab2:
         except Exception:
             _scan_streak_map, _scan_turn_map = {}, {}
 
-        def _extra_badges(code):
+        def _extra_badges(code, score=None):
             badges = ""
+            if score is not None and score >= 8.0:
+                badges += ('<span class="badge badge-gold" style="margin-left:4px">'
+                           '⚠️ 過熱</span>')
             streak = _scan_streak_map.get(code, 0)
             if streak >= 3:
                 badges += f'<span class="badge badge-gold" style="margin-left:4px">投信連買{streak}日</span>'
@@ -573,12 +578,14 @@ with tab2:
         _show_n = _nc.selectbox("卡片顯示檔數", [20, 50, 100, _opt_all],
                                 index=0, key="scan_show_n")
         _show_n = 10 ** 9 if _show_n == _opt_all else int(_show_n)
+        st.caption("排序依 2 年回測校準：6–7 分為甜蜜區；**8 分以上屬過熱區**"
+                   "（歷史 20 日期望轉負）→ 標記 ⚠️ 並整組置後，追高前先看回檔。")
 
         if buys:
             st.markdown(f'<div class="qsec">🟥 買進機會 ({len(buys)} 檔)</div>', unsafe_allow_html=True)
             for i, c in enumerate(buys[:_show_n], 1):
                 reason_short = "、".join(c["reasons"][:3]) if c["reasons"] else "—"
-                _ebadges = _extra_badges(c["代碼"])
+                _ebadges = _extra_badges(c["代碼"], c["score"])
                 st.markdown(f"""
 <div class="sk-card" style="border-color:rgba(232,25,44,0.3)">
   <div class="sk-rank">{i}</div>
