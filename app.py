@@ -19,6 +19,7 @@ from tw_data import (
     get_gsheet_client, PORTFOLIO_SHEET_TITLE,
     cached_get_inst_flow, cached_get_inst_summary, cached_get_trust_streak,
     cached_get_revenue_history, cached_get_revenue_signals, cached_get_data_status,
+    cached_get_signal_journal,
 )
 from tw_indicators import detect_candlestick_patterns
 from tw_notifications import format_semi_tg_messages, send_tg_message
@@ -769,6 +770,40 @@ with tab2:
                     _cpd[_disp_cols_exist].rename(columns=_rename_map),
                     use_container_width=True, hide_index=True,
                 )
+
+        # ── 訊號日誌（樣本外追蹤）─────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("**📒 訊號日誌（樣本外成績單）**")
+        try:
+            _jsum, _jrows = cached_get_signal_journal()
+            if _jrows is None or _jrows.empty:
+                st.caption("尚無紀錄。每交易日 18:30 排程會以預設參數自動記錄"
+                           "「當日新觸發」訊號，並於 5/20/60 個交易日後自動結算報酬"
+                           "（T+1 開盤進場、含成本、含息）——從今天起累積真正的樣本外證據。")
+            else:
+                _j1, _j2, _j3, _j4 = st.columns(4)
+                _j1.metric("累積訊號", _jsum["n_total"])
+                _j2.metric("已結算(20日)", _jsum["n20"])
+                _j3.metric("20日均報酬",
+                           f"{_jsum['avg20']:+.2f}%" if _jsum["avg20"] is not None else "—")
+                _j4.metric("20日勝率",
+                           f"{_jsum['win20']:.0f}%" if _jsum["win20"] is not None else "—")
+                _jd = _jrows.head(30).copy()
+                for _c in ["ret_5", "ret_20", "ret_60"]:
+                    _jd[_c] = _jd[_c].map(
+                        lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "…")
+                _jd["yoy_pct"] = _jd["yoy_pct"].map(
+                    lambda v: f"{v:.0f}%" if pd.notna(v) else "—")
+                st.dataframe(
+                    _jd.rename(columns={
+                        "signal_date": "訊號日", "stock_id": "代號", "name": "名稱",
+                        "close_at_signal": "訊號日收盤", "streak": "投信連買",
+                        "yoy_pct": "YoY", "ret_5": "5日", "ret_20": "20日",
+                        "ret_60": "60日"}),
+                    use_container_width=True, hide_index=True,
+                )
+        except Exception as _je:
+            st.caption(f"日誌查詢失敗：{_je}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -410,6 +410,20 @@ def cached_get_revenue_signals():
 
 
 @st.cache_data(ttl=900, show_spinner=False)
+def cached_get_signal_journal():
+    """訊號日誌（樣本外追蹤）快取封裝（TTL=15分鐘）"""
+    try:
+        from tw_db import get_conn
+        from tw_signal_log import get_journal
+        conn = get_conn()
+        return get_journal(conn)
+    except Exception:
+        import pandas as pd
+        return ({"n_total": 0, "n20": 0, "avg20": None, "win20": None,
+                 "avg60": None}, pd.DataFrame())
+
+
+@st.cache_data(ttl=900, show_spinner=False)
 def cached_get_data_status():
     """get_data_status 快取封裝（TTL=15分鐘）"""
     try:

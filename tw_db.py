@@ -67,6 +67,23 @@ CREATE TABLE IF NOT EXISTS holidays (
     name TEXT
 );
 
+CREATE TABLE IF NOT EXISTS stock_names (
+    stock_id TEXT PRIMARY KEY,
+    name     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS signal_log (
+    signal_date TEXT NOT NULL,
+    stock_id    TEXT NOT NULL,
+    strategy    TEXT NOT NULL,     -- 'composite_v1'
+    params      TEXT,              -- 觸發當下的參數 json（追溯用）
+    close_at_signal REAL,
+    f_net INTEGER, t_net INTEGER, streak INTEGER, yoy_pct REAL,
+    entry_open REAL,               -- T+1 開盤（次日由排程回填）
+    ret_5 REAL, ret_20 REAL, ret_60 REAL,   -- 含成本、含息還原
+    PRIMARY KEY (signal_date, stock_id, strategy)
+);
+
 CREATE TABLE IF NOT EXISTS dividend_events (
     ex_date      TEXT NOT NULL,   -- 除權息/拆分生效日
     stock_id     TEXT NOT NULL,
@@ -97,7 +114,8 @@ CREATE INDEX IF NOT EXISTS idx_price_stock ON daily_price (stock_id, trade_date)
 
 # 快照（給雲端手機用）只帶這些表；daily_price 體積大且雲端用不到，
 # 排除以維持手機冷啟動速度（見 tw_snapshot.make_snapshot）。
-SNAPSHOT_TABLES = ["inst_flow", "monthly_revenue", "sync_log", "holidays"]
+SNAPSHOT_TABLES = ["inst_flow", "monthly_revenue", "sync_log", "holidays",
+                   "signal_log", "stock_names"]
 
 
 def get_conn() -> sqlite3.Connection:

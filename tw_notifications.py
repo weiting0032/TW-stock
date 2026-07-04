@@ -7,9 +7,15 @@ SEMI_SCORE_MIN = 5.0
 
 def _get_tg_creds():
     try:
-        return str(st.secrets.get("TG_TOKEN", "")).strip(), str(st.secrets.get("TG_CHAT_ID", "")).strip()
+        tok = str(st.secrets.get("TG_TOKEN", "")).strip()
+        cid = str(st.secrets.get("TG_CHAT_ID", "")).strip()
+        if tok and cid:
+            return tok, cid
     except Exception:
-        return "", ""
+        pass
+    # headless 排程備援：環境變數或本機 ~/.streamlit/secrets.toml（st.secrets 亦讀得到）
+    import os
+    return os.environ.get("TG_TOKEN", "").strip(), os.environ.get("TG_CHAT_ID", "").strip()
 
 
 def send_tg_message(text: str) -> bool:

@@ -83,6 +83,7 @@ def fetch_twse_prices(d: date) -> Optional[pd.DataFrame]:
         "close":  df["收盤價"].map(_num),
         "volume": df["成交股數"].map(_int0),
         "turnover": df["成交金額"].map(_int0),
+        "name":   df["證券名稱"].astype(str).str.strip(),
     })
     return out[out["stock_id"].str.fullmatch(r"\d{4}")].reset_index(drop=True)
 
@@ -122,6 +123,7 @@ def fetch_tpex_prices(d: date) -> Optional[pd.DataFrame]:
         "close":  df[col("收盤")].map(_num),
         "volume": df[c_vol].map(_int0) if c_vol else 0,
         "turnover": df[c_amt].map(_int0) if c_amt else 0,
+        "name":   df[col("名稱")].astype(str).str.strip() if col("名稱") else "",
     })
     return out[out["stock_id"].str.fullmatch(r"\d{4}")].reset_index(drop=True)
 
@@ -174,6 +176,14 @@ def sync_daily_prices(
         )
         conn.commit()
 
+    def _store(df: pd.DataFrame) -> int:
+        """行情寫 daily_price；名稱另存 stock_names（給 UI/推播顯示用）。"""
+        names = df[["stock_id", "name"]].drop_duplicates("stock_id")
+        names = names[names["name"].astype(str).str.len() > 0]
+        if not names.empty:
+            upsert(conn, "stock_names", names)
+        return upsert(conn, "daily_price", df.drop(columns=["name"]))
+
     d = window_start
     while d <= today:
         if d == today and tw_now.hour < 18:
@@ -195,7 +205,7 @@ def sync_daily_prices(
             try:
                 df = fetch_twse_prices(d)
                 if df is not None and not df.empty:
-                    total_rows += upsert(conn, "daily_price", df)
+                    total_rows += _store(df)
                     _log("TWSE_PRICE", d, "ok", total_rows)
                 elif d != today:
                     _log("TWSE_PRICE", d, "empty", 0, "stat!=OK")
@@ -206,7 +216,7 @@ def sync_daily_prices(
             try:
                 df = fetch_tpex_prices(d)
                 if df is not None and not df.empty:
-                    n = upsert(conn, "daily_price", df)
+                    n = _store(df)
                     total_rows += n
                     _log("TPEX_PRICE", d, "ok", n)
                 elif df is None:

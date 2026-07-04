@@ -29,6 +29,19 @@ def main():
         sync_daily_prices(conn)
         sync_dividends(conn)
         sync_monthly_revenue(conn, months_back=2)
+
+        # 訊號日誌：記當日新觸發 → 回填到期報酬 → TG 推播（無憑證自動跳過）
+        from tw_signal_log import log_signals, push_daily_signals, update_signal_returns
+        latest = conn.execute("SELECT MAX(trade_date) FROM daily_price").fetchone()[0]
+        hits = log_signals(conn, latest)
+        n_upd = update_signal_returns(conn)
+        print(f"[signal] {latest} new={len(hits)} returns_updated={n_upd}")
+        try:
+            sent = push_daily_signals(conn, hits, latest)
+            print(f"[signal] telegram {'sent' if sent else 'skipped (無憑證或發送失敗)'}")
+        except Exception as e:
+            print(f"[signal] telegram error: {e}")
+
         status = get_data_status(conn)
         conn.close()
         inst = status.get("inst_flow", {})
