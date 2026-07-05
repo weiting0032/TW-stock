@@ -882,6 +882,48 @@ with tab3:
 </div>
 """, unsafe_allow_html=True)
 
+        # ── 綜合體檢（全功能規則彙總，每個燈號可追溯至回測結論）────────────────
+        try:
+            from tw_summary import LIGHT, build_stock_summary
+            _dc = st.session_state.get("diag_code", "")
+            _sumry = build_stock_summary(
+                _dc, p_strat, float(p_df["Close"].iloc[-1]),
+                float(last_row.get("SMA20") or 0),
+                MARKET_MAP.get(_dc), TAIEX_CYCLE)
+            _v, _g = _sumry["verdict"], _sumry["gate"]
+            _rows_html = "".join(
+                f'<div style="display:flex;gap:8px;align-items:baseline;padding:4px 0;'
+                f'border-bottom:1px dashed rgba(255,255,255,0.06)">'
+                f'<span style="min-width:16px">{LIGHT[_l]}</span>'
+                f'<span style="min-width:60px;color:var(--muted);font-size:0.7rem">{_n}</span>'
+                f'<span style="font-size:0.78rem;font-weight:600">{_h}</span>'
+                f'<span style="font-size:0.68rem;color:var(--muted);margin-left:auto;'
+                f'text-align:right;max-width:55%">{_d}</span></div>'
+                for _n, _l, _h, _d in _sumry["dims"])
+            _j = _sumry["journal"]
+            _j_html = ""
+            if _j["n"]:
+                _lr = _j["last"]
+                _r20 = (f"，20日實現 {_lr['ret_20'] * 100:+.1f}%"
+                        if _lr and _lr.get("ret_20") is not None
+                        and pd.notna(_lr.get("ret_20")) else "")
+                _j_html = (f'<div style="margin-top:6px;font-size:0.7rem;color:var(--blue)">'
+                           f'📒 本標的曾入選複合訊號日誌 {_j["n"]} 次'
+                           f'（最近 {_lr["date"]}{_r20}）</div>')
+            st.markdown(f"""
+<div class="sc" style="margin-bottom:14px;border-left:3px solid {_v['color']}">
+  <div style="font-size:0.95rem;font-weight:800;margin-bottom:4px">{_v['title']}</div>
+  <div style="font-size:0.74rem;line-height:1.55;margin-bottom:8px">{_v['text']}</div>
+  <div style="font-size:0.72rem;margin-bottom:6px">{LIGHT[_g['light']]} <b>{_g['title']}</b>
+  　<span style="color:var(--muted)">{_g['detail']}</span></div>
+  {_rows_html}
+  {_j_html}
+  <div style="margin-top:7px;font-size:0.6rem;color:var(--muted)">
+  綜合體檢＝規則彙總（依據：評分十分位回測／複合選股2年回測／法人因子A/B），非投資建議；⚪＝該資料層查無此標的。</div>
+</div>""", unsafe_allow_html=True)
+        except Exception as _se:
+            st.caption(f"綜合體檢產生失敗：{_se}")
+
         k1, k2, k3, k4, k5, k6 = st.columns(6)
         k1.metric("現價",     f"${p_df['Close'].iloc[-1]:.2f}")
         k2.metric("RSI(14)",  f"{float(last_row['RSI']):.1f}")
