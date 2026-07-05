@@ -49,6 +49,15 @@ def main():
         except Exception as e:
             print(f"[signal] telegram error: {e}")
 
+        # 持倉例外推播（事件驅動；週五附組合週結）
+        try:
+            from tw_portfolio_alerts import push_portfolio_alerts
+            is_fri = datetime.now().weekday() == 4
+            sent = push_portfolio_alerts(conn, weekly=is_fri)
+            print(f"[pf-alert] {'sent' if sent else 'no-op'}")
+        except Exception as e:
+            print(f"[pf-alert] error: {e}")
+
         status = get_data_status(conn)
         conn.close()
         inst = status.get("inst_flow", {})

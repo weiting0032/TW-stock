@@ -419,7 +419,40 @@ with tab1:
                                   paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
             st.plotly_chart(pie_fig, use_container_width=True, config={"displayModeBar": False})
 
+        # ── 組合體質儀表（P1）────────────────────────────────────────────────
+        try:
+            _pf_ind, _w_net, _sc_sum, _hot_n = {}, 0.0, 0.0, 0
+            for _it in details:
+                _mm = _it["m"] or {}
+                _ind_k = str(_mm.get("產業", "其他") or "其他")
+                _pf_ind[_ind_k] = _pf_ind.get(_ind_k, 0) + _it["mv"]
+                _f5_, _t5_ = _mm.get("f_net_5d"), _mm.get("t_net_5d")
+                if _f5_ is not None:
+                    _w_net += float(_f5_) + float(_t5_ or 0)
+                _sc_sum += _it["strat"]["score"]
+                if _it["strat"]["score"] >= 8:
+                    _hot_n += 1
+            _top_ind, _top_mv = max(_pf_ind.items(), key=lambda x: x[1]) if _pf_ind else ("—", 0)
+            _conc = _top_mv / total_mv * 100 if total_mv else 0
+            _g1, _g2, _g3, _g4 = st.columns(4)
+            _g1.metric("最大產業曝險", f"{_conc:.0f}%", delta=_top_ind, delta_color="off")
+            _g2.metric("持股法人5日合計", f"{_w_net:+,.0f} 張")
+            _g3.metric("平均評分", f"{_sc_sum / max(len(details), 1):.1f}/10")
+            _g4.metric("過熱檔數（≥8分）", f"{_hot_n} 檔")
+            if _conc >= 40:
+                st.caption(f"⚠️ 產業集中度偏高：{_top_ind} 佔組合 {_conc:.0f}%"
+                           "——單一產業的利空將主導整體損益，留意分散。")
+        except Exception:
+            pass
+
         st.markdown('<div class="qsec">持倉明細 (依訊號優先排序)</div>', unsafe_allow_html=True)
+
+        # 持倉徽章用的營收訊號 prefetch（失敗只是不顯示徽章）
+        try:
+            _h_rev = cached_get_revenue_signals()
+            _h_yoy = dict(zip(_h_rev["stock_id"], _h_rev["yoy_pct"])) if not _h_rev.empty else {}
+        except Exception:
+            _h_yoy = {}
 
         for item in details:
             r, m, cp, strat = item["r"], item["m"], item["cp"], item["strat"]
@@ -447,9 +480,45 @@ with tab1:
                 action_line = "<span class='sig-watch'>☕ 觀望中，無明確動作</span>"
 
             # Pre-compute all conditional values to avoid blank-line HTML rendering issues
-            _inst_net   = float(m.get("三大合計", 0) or 0) if m else 0.0
-            _inst_col   = "var(--up)" if _inst_net > 0 else "var(--down)" if _inst_net < 0 else "var(--muted)"
-            _inst_str   = f"+{int(_inst_net)}張" if _inst_net > 0 else (f"{int(_inst_net)}張" if _inst_net < 0 else "—")
+            # 法人格優先用 DB 5 日序列（與評分因子同源），無序列才退回 wespai 當日
+            _f5h = (m or {}).get("f_net_5d")
+            _t5h = (m or {}).get("t_net_5d")
+            if _f5h is not None and _t5h is not None:
+                _i5 = float(_f5h) + float(_t5h)
+                _inst_lbl = "法人5日"
+                _inst_col = "var(--up)" if _i5 > 0 else "var(--down)" if _i5 < 0 else "var(--muted)"
+                _inst_str = f"{_i5:+,.0f}張"
+            else:
+                _inst_lbl = "法人當日"
+                _inst_net = float(m.get("三大合計", 0) or 0) if m else 0.0
+                _inst_col = "var(--up)" if _inst_net > 0 else "var(--down)" if _inst_net < 0 else "var(--muted)"
+                _inst_str = f"+{int(_inst_net)}張" if _inst_net > 0 else (f"{int(_inst_net)}張" if _inst_net < 0 else "—")
+
+            # 持倉徽章：複合條件狀態／連買／融資／過熱
+            _stkh  = int((m or {}).get("trust_streak", 0) or 0)
+            _utilh = (m or {}).get("margin_util")
+            _yoyh  = _h_yoy.get(r["Symbol"])
+            _hb = ""
+            if _stkh >= 3:
+                _hb += f'<span class="badge badge-gold" style="margin-left:4px">投信連買{_stkh}日</span>'
+            _chip_ok_h = (_f5h is not None and _t5h is not None
+                          and _f5h > 0 and _t5h > 0 and _stkh >= 5)
+            _rev_ok_h = _yoyh is not None and pd.notna(_yoyh) and _yoyh > 20
+            if _chip_ok_h and _rev_ok_h:
+                _hb += '<span class="badge badge-up" style="margin-left:4px">✅ 複合條件成立</span>'
+            _broken = []
+            if _f5h is not None and _t5h is not None and _f5h < 0 and _t5h < 0:
+                _broken.append("外資投信同賣")
+            if _yoyh is not None and pd.notna(_yoyh) and _yoyh < 0:
+                _broken.append("YoY轉負")
+            if _broken:
+                _hb += (f'<span class="badge badge-down" style="margin-left:4px">'
+                        f'⚠️ {"／".join(_broken)}</span>')
+            if _utilh is not None and _utilh >= 15:
+                _hb += f'<span class="badge badge-gold" style="margin-left:4px">融資{_utilh:.0f}%</span>'
+            if strat["score"] >= 8:
+                _hb += '<span class="badge badge-gold" style="margin-left:4px">⚠️ 過熱</span>'
+            _hb_html = f'<div style="margin-top:4px">{_hb}</div>' if _hb else ''
             _day_chg    = float(m.get("漲跌幅", 0) or 0) if m else 0.0
             _chg_col    = "var(--up)" if _day_chg > 0 else "var(--down)" if _day_chg < 0 else "var(--muted)"
             _chg_str    = f"{_day_chg:+.2f}%" if _day_chg != 0 else "—"
@@ -462,17 +531,17 @@ with tab1:
 <div class="sc">
   <div class="sc-accent" style="background:{accent_colour(strat)}"></div>
   <div class="sc-top">
-    <div><div class="sc-name">{r['Name']} <span class="sc-code">{r['Symbol']}</span></div><div style="margin-top:3px;font-size:0.7rem;color:var(--muted)">{m['產業']} · PE {m['PE']} · PB {m['PB']}</div>{_ptag_html}</div>
+    <div><div class="sc-name">{r['Name']} <span class="sc-code">{r['Symbol']}</span></div><div style="margin-top:3px;font-size:0.7rem;color:var(--muted)">{m['產業']} · PE {m['PE']} · PB {m['PB']}</div>{_hb_html}{_ptag_html}</div>
     <div style="text-align:right">{signal_badge_html(strat)}<div style="margin-top:4px;font-family:var(--mono);font-size:0.7rem;color:var(--muted)">分數 {strat['score']:.1f}/10</div></div>
   </div>
   <div style="display:flex;justify-content:space-between;align-items:baseline;"><span class="sc-price" style="color:{pl_colour(diff_val)}">${cp:.2f}</span><span style="font-family:var(--mono);font-size:0.88rem;color:{pl_colour(p_pct)};font-weight:700">{_pct_dir}{abs(p_pct):.2f}%</span></div>
   <div style="font-family:var(--mono);font-size:0.75rem;color:var(--muted);margin:2px 0 6px">損益 {_pl_dir}${abs(diff_val):,.0f} | 成本 ${r['Cost']:.2f} | {r['Shares']:,.0f}股</div>
   {score_bar_html(strat['score'])}
   <div class="sc-grid">
-    <div><span class="sc-kv-label">停損</span><br><span class="sc-kv-value" style="color:var(--down)">{sl_str}</span></div>
+    <div><span class="sc-kv-label">出場線(季線)</span><br><span class="sc-kv-value" style="color:var(--down)">{sl_str}</span></div>
     <div><span class="sc-kv-label">目標</span><br><span class="sc-kv-value" style="color:var(--up)">{tp_str}</span></div>
     <div><span class="sc-kv-label">量比</span><br><span class="sc-kv-value" style="color:{_vol_r_col}">{vol_r:.1f}x</span></div>
-    <div><span class="sc-kv-label">法人流向</span><br><span class="sc-kv-value" style="color:{_inst_col}">{_inst_str}</span></div>
+    <div><span class="sc-kv-label">{_inst_lbl}</span><br><span class="sc-kv-value" style="color:{_inst_col}">{_inst_str}</span></div>
     <div><span class="sc-kv-label">今日漲跌</span><br><span class="sc-kv-value" style="color:{_chg_col}">{_chg_str}</span></div>
     <div><span class="sc-kv-label">分析依據</span><br><span class="sc-kv-value" style="font-size:0.68rem">{_reasons_s}</span></div>
   </div>

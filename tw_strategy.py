@@ -43,7 +43,11 @@ def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0,
     inst_net    = float(market_info.get("三大合計", 0) or 0) if market_info else 0.0
     margin_rate = float(market_info.get("融資率",  0) or 0) if market_info else 0.0
 
-    stop_loss   = max(close - 2.0 * atr, sma60 * 0.98, close * 0.88) if atr else close * 0.88
+    # 出場線＝實際觸發線（季線−2%）。舊版顯示 max(close−2ATR, 季線×0.98, close×0.88)
+    # 前後兩項恆低於當日收盤、永不觸發，顯示與觸發脫鉤且每日浮動；
+    # 2026-07-05 出場回測（exit_backtest.py）驗證：趨勢單層出場平均+16.1%，
+    # 加硬停損/獲利保護皆以平均報酬換尾部風險 → 維持趨勢出場、顯示改為真實線。
+    stop_loss   = sma60 * 0.98 if sma60 > 0 else close * 0.88
     take_profit = min(high52, close + 3.0 * atr) if atr and high52 > close else (close + 3.0 * atr if atr else close * 1.12)
     # ATR-based position sizing（每筆風險上限 30,000 TWD）
     _sl_dist  = max(close - stop_loss, close * 0.05)
@@ -176,7 +180,7 @@ def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0,
             "action": "SELL_EXIT", "name": "停損出場", "color": "#00B050", "score": score,
             "tp": take_profit, "sl": stop_loss, "suggest_lots": math.ceil(held_shares / 1000),
             "reasons": reasons, "warnings": warnings,
-            "html": (f"<span class='sig-sell'>⚠️ 跌破 ATR 停損防線 ${stop_loss:.2f}</span><br>"
+            "html": (f"<span class='sig-sell'>⚠️ 跌破季線出場線 ${stop_loss:.2f}</span><br>"
                      f"紀律執行出場，<b>{math.ceil(held_shares/1000)} 張</b>全部出清。{warning_str}"),
         }
 
@@ -215,7 +219,7 @@ def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0,
             "tp": take_profit, "sl": stop_loss, "suggest_lots": 0,
             "reasons": reasons, "warnings": warnings,
             "html": (f"<span class='sig-hold'>🛡️ 趨勢向上，持股不動</span><br>"
-                     f"跌破季線 ${sma60:.2f} 或停損 ${stop_loss:.2f} 再出場。"),
+                     f"出場線 ${stop_loss:.2f}（季線−2%）跌破再走。"),
         }
 
     return {
