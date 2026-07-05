@@ -6,6 +6,15 @@ import math
 import time
 from datetime import datetime, date, timedelta
 
+import pytz as _pytz
+
+_TPE_TZ = _pytz.timezone("Asia/Taipei")
+
+
+def _now_tpe() -> datetime:
+    """顯示用台北時間（雲端容器是 UTC，datetime.now() 會差 8 小時）。"""
+    return datetime.now(_TPE_TZ)
+
 import pandas as pd
 import plotly.graph_objects as go
 import pytz
@@ -271,7 +280,7 @@ st.markdown(f"""
   <div class="tw-logo">台股<span>戰情中心</span> <span style="font-size:0.65rem;color:var(--muted)">V16</span></div>
   <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
     <span class="badge {_sc_cls.get(session_now,'badge-flat')}">{session_now}</span>
-    <span class="badge badge-flat" style="font-family:'JetBrains Mono'">{datetime.now().strftime('%m/%d %H:%M')}</span>
+    <span class="badge badge-flat" style="font-family:'JetBrains Mono'">{_now_tpe().strftime('%m/%d %H:%M')}</span>
     {_cyc_badges}
   </div>
 </div>
@@ -1484,6 +1493,6 @@ with tab_ind:
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown(f"""
 <div style="text-align:center;padding:20px 0 6px;font-size:0.62rem;color:var(--muted);font-family:'JetBrains Mono'">
-  台股戰情中心 V16 · {datetime.now().strftime('%Y/%m/%d %H:%M')} · 紅漲綠跌 · 僅供參考勿作投資依據
+  台股戰情中心 V16 · {_now_tpe().strftime('%Y/%m/%d %H:%M')} · 紅漲綠跌 · 僅供參考勿作投資依據
 </div>
 """, unsafe_allow_html=True)

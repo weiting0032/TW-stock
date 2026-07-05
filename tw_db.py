@@ -147,6 +147,8 @@ SNAPSHOT_TABLES = {
     "stock_names": None,
     "tdcc_dispersion": None,
     "margin_trading": "trade_date >= date('now','-130 days')",
+    # 近 45 天價格切片（~2MB）：產業輪動的 20 日報酬在雲端也能算
+    "daily_price": "trade_date >= date('now','-45 days')",
 }
 
 

@@ -460,16 +460,23 @@ def cached_get_industry_rotation(days: int = 5):
         conn = get_conn()
         s = get_inst_summary(conn, days)
         r20 = get_recent_returns(conn, 20)
+        if r20 is None or r20.empty:
+            # 雲端快照可能不含足夠價格資料 → 降級：無 20 日報酬欄，
+            # 金額估算改用 wespai 現價（下方 fillna），不可整段失敗
+            r20 = pd.DataFrame(columns=["stock_id", "close", "ret_pct"])
         rev = get_revenue_signals(conn)[["stock_id", "yoy_pct"]]
 
         base = pd.DataFrame([
-            {"stock_id": sid, "名稱": v.get("名稱", ""), "產業": v.get("產業", "")}
+            {"stock_id": sid, "名稱": v.get("名稱", ""), "產業": v.get("產業", ""),
+             "現價": v.get("現價")}
             for sid, v in mm.items()
         ])
         base = base[base["產業"].astype(str).str.len() > 0]
         df = (base.merge(s, on="stock_id", how="inner")
                   .merge(r20, on="stock_id", how="left")
                   .merge(rev, on="stock_id", how="left"))
+        df["close"] = pd.to_numeric(df["close"], errors="coerce").fillna(
+            pd.to_numeric(df["現價"], errors="coerce"))
         df["f_amt"] = (df["f_net"] * df["close"] / 1e8).round(2)   # 億
         df["t_amt"] = (df["t_net"] * df["close"] / 1e8).round(2)
 
