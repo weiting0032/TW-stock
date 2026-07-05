@@ -438,6 +438,32 @@ def cached_get_revenue_signals():
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_get_fin_history(stock_id: str, quarters: int = 12):
+    """季報歷史（含單季EPS/同季毛利率YoY差）快取封裝（TTL=1小時）"""
+    try:
+        from tw_db import get_conn
+        from tw_fundamentals import get_fin_history
+        conn = get_conn()
+        return get_fin_history(conn, stock_id, quarters)
+    except Exception:
+        import pandas as pd
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_get_fin_signals():
+    """全市場最新季財報訊號（TTM EPS/毛利率轉折）快取封裝（TTL=1小時）"""
+    try:
+        from tw_db import get_conn
+        from tw_fundamentals import get_fin_signals
+        conn = get_conn()
+        return get_fin_signals(conn)
+    except Exception:
+        import pandas as pd
+        return pd.DataFrame()
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def cached_get_industry_rotation(days: int = 5):
     """

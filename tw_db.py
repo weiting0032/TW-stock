@@ -97,6 +97,18 @@ CREATE TABLE IF NOT EXISTS dividend_events (
     PRIMARY KEY (ex_date, stock_id)
 );
 
+CREATE TABLE IF NOT EXISTS quarterly_fin (
+    stock_id     TEXT NOT NULL,
+    quarter      TEXT NOT NULL,   -- '2026Q1'；數值為財報「累計制」原值
+    revenue_m    REAL,            -- 累計營業收入（百萬元）
+    gross_margin REAL,            -- 累計毛利率%
+    op_margin    REAL,            -- 累計營益率%
+    net_margin   REAL,            -- 累計稅後純益率%
+    eps_cum      REAL,            -- 累計基本每股盈餘（元）
+    fetched_at   TEXT,
+    PRIMARY KEY (stock_id, quarter)
+);
+
 CREATE TABLE IF NOT EXISTS margin_trading (
     trade_date TEXT NOT NULL,
     stock_id   TEXT NOT NULL,
@@ -146,6 +158,7 @@ SNAPSHOT_TABLES = {
     "signal_log": None,
     "stock_names": None,
     "tdcc_dispersion": None,
+    "quarterly_fin": None,
     "margin_trading": "trade_date >= date('now','-130 days')",
     # 近 45 天價格切片（~2MB）：產業輪動的 20 日報酬在雲端也能算
     "daily_price": "trade_date >= date('now','-45 days')",

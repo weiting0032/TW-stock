@@ -30,9 +30,11 @@ def main():
         sync_dividends(conn)
         from tw_margin import sync_margin
         from tw_tdcc import sync_tdcc
+        from tw_fundamentals import sync_quarterly_fin
         sync_margin(conn)
         n_tdcc = sync_tdcc(conn)
         print(f"[tdcc] rows={n_tdcc}")
+        sync_quarterly_fin(conn)
         sync_monthly_revenue(conn, months_back=2)
 
         # 訊號日誌：記當日新觸發 → 回填到期報酬 → TG 推播（無憑證自動跳過）

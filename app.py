@@ -29,7 +29,7 @@ from tw_data import (
     cached_get_inst_flow, cached_get_inst_summary, cached_get_trust_streak,
     cached_get_revenue_history, cached_get_revenue_signals, cached_get_data_status,
     cached_get_signal_journal, cached_get_margin_history, cached_get_tdcc_trend,
-    cached_get_industry_rotation,
+    cached_get_industry_rotation, cached_get_fin_history, cached_get_fin_signals,
 )
 from tw_indicators import detect_candlestick_patterns
 from tw_notifications import format_semi_tg_messages, send_tg_message
@@ -689,8 +689,12 @@ with tab2:
         if _rev_mode in ("YoY > 門檻", "兩者任一"):
             _yoy_thr = st.number_input("YoY 門檻 (%)", value=20.0, step=1.0,
                                         key="compound_yoy_thr")
+        _gm_chk = st.checkbox(
+            "＋毛利率轉折確認（最新季毛利率較去年同季上升；季報訊號，未回測）",
+            value=False, key="compound_gm")
 
-        def _run_compound_screen(inst_days, min_streak, f_buy, t_buy, rev_mode, yoy_thr):
+        def _run_compound_screen(inst_days, min_streak, f_buy, t_buy, rev_mode, yoy_thr,
+                                 gm_confirm=False):
             """複合選股核心查詢，回傳 DataFrame。可獨立呼叫測試。"""
             try:
                 _sum_df    = cached_get_inst_summary(days=inst_days)
@@ -742,6 +746,18 @@ with tab2:
                     merged["turnaround"].fillna(False)
                 )
 
+            # 毛利率轉折確認（選配，季報 gm_yoy_delta > 0）
+            if gm_confirm:
+                try:
+                    _fin_sig = cached_get_fin_signals()
+                    if not _fin_sig.empty:
+                        merged = merged.merge(
+                            _fin_sig[["stock_id", "margin_up", "gm_yoy_delta"]],
+                            on="stock_id", how="left")
+                        mask = mask & merged["margin_up"].fillna(False)
+                except Exception:
+                    pass
+
             result = merged[mask].copy()
             result["f_net_k"] = (result["f_net"] / 1000).round(0).astype(int)
             result["t_net_k"] = (result["t_net"] / 1000).round(0).astype(int)
@@ -750,7 +766,8 @@ with tab2:
         if st.button("🔍 執行複合選股", use_container_width=True, key="compound_run"):
             with st.spinner("從 DB 篩選全市場…"):
                 _cpd_res = _run_compound_screen(
-                    _inst_days, _min_streak, _f_buy_chk, _t_buy_chk, _rev_mode, _yoy_thr
+                    _inst_days, _min_streak, _f_buy_chk, _t_buy_chk, _rev_mode, _yoy_thr,
+                    gm_confirm=_gm_chk,
                 )
             st.session_state.compound_results = _cpd_res
 
@@ -921,7 +938,7 @@ with tab3:
         if _diag_code:
             st.markdown('<div class="qsec">籌碼與營收</div>', unsafe_allow_html=True)
             _inst_tab, _margin_tab, _rev_tab = st.tabs(
-                ["📊 法人籌碼", "🧮 融資券·大戶", "💰 月營收"])
+                ["📊 法人籌碼", "🧮 融資券·大戶", "💰 營收·財報"])
 
             with _inst_tab:
                 try:
@@ -1018,8 +1035,40 @@ with tab3:
                         _r2.metric(f"MoM%{_ym_sfx}",  f"{_last_rev['mom_pct']:+.1f}%" if _last_rev['mom_pct'] is not None else "—")
                         _cum = _last_rev.get("cum_yoy_pct")
                         _r3.metric("累計 YoY%",    f"{_cum:+.1f}%" if _cum is not None and not pd.isna(_cum) else "—")
+
+                    # ── 季報（EPS/三率，累計制→單季換算）────────────────────
+                    st.markdown("###### 季報（EPS／三率）")
+                    _fin = cached_get_fin_history(_diag_code, quarters=8)
+                    if _fin is None or _fin.empty:
+                        st.caption("尚無季報資料（回補進行中；金融業毛利率欄位不適用）。")
+                    else:
+                        _f_last = _fin.iloc[-1]
+                        _sig_all = cached_get_fin_signals()
+                        _sig_row = _sig_all[_sig_all["stock_id"] == _diag_code] \
+                            if not _sig_all.empty else pd.DataFrame()
+                        _ttm = _sig_row["ttm_eps"].iloc[0] if not _sig_row.empty else None
+                        _px_now = (MARKET_MAP.get(_diag_code, {}) or {}).get("現價")
+                        _pe_ttm = (_px_now / _ttm) if _ttm and _px_now and _ttm > 0 else None
+                        _q1, _q2, _q3, _q4 = st.columns(4)
+                        _q1.metric(f"單季EPS（{_f_last['quarter']}）",
+                                   f"{_f_last['eps_q']:.2f}" if pd.notna(_f_last["eps_q"]) else "—")
+                        _q2.metric("TTM EPS",
+                                   f"{_ttm:.2f}" if _ttm is not None and pd.notna(_ttm) else "—")
+                        _q3.metric("PE（TTM）",
+                                   f"{_pe_ttm:.1f}" if _pe_ttm else "—")
+                        _q4.metric("毛利率",
+                                   f"{_f_last['gross_margin']:.1f}%" if pd.notna(_f_last["gross_margin"]) else "—",
+                                   delta=(f"{_f_last['gm_yoy_delta']:+.1f}pp/同季YoY"
+                                          if pd.notna(_f_last.get("gm_yoy_delta")) else None))
+                        _fin_v = _fin[["quarter", "eps_q", "gross_margin",
+                                       "op_margin", "gm_yoy_delta"]].copy()
+                        _fin_v = _fin_v.rename(columns={
+                            "quarter": "季", "eps_q": "單季EPS",
+                            "gross_margin": "毛利率%", "op_margin": "營益率%",
+                            "gm_yoy_delta": "毛利YoY差pp"}).iloc[::-1]
+                        st.dataframe(_fin_v, use_container_width=True, hide_index=True)
                 except Exception as _ex:
-                    st.info(f"月營收資料查詢失敗：{_ex}")
+                    st.info(f"營收／財報資料查詢失敗：{_ex}")
 
         if st.button("✖ 清除圖表", use_container_width=True):
             st.session_state.diag_plot   = None

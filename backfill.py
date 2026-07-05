@@ -50,6 +50,13 @@ def main():
         metavar="N",
         help="Backfill margin trading N calendar days (default 0=skip)",
     )
+    parser.add_argument(
+        "--fin-quarters",
+        type=int,
+        default=0,
+        metavar="Q",
+        help="Backfill quarterly financials Q quarters (default 0=skip)",
+    )
     args = parser.parse_args()
 
     conn = get_conn()
@@ -77,6 +84,13 @@ def main():
         print(f"\nBackfilling margin trading ({args.margin_days} calendar days)...")
         sync_margin(conn, backfill_days=args.margin_days, progress_cb=progress)
         print("Margin backfill done.")
+
+    # -- Quarterly financials backfill ----------------------------------------
+    if args.fin_quarters > 0:
+        from tw_fundamentals import backfill_quarterly_fin
+        print(f"\nBackfilling quarterly financials ({args.fin_quarters} quarters)...")
+        backfill_quarterly_fin(conn, quarters=args.fin_quarters)
+        print("Quarterly financials backfill done.")
 
     # -- Revenue backfill ------------------------------------------------------
     if args.revenue_months > 0:
