@@ -167,6 +167,25 @@ def _cached_stock_options(market_map_size: int) -> list:
     return [f"{k} {v['名稱']} ({v['產業']})" for k, v in MARKET_MAP.items()]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# DB 快照下載——必須在 get_market_data() 之前：雲端新容器 DB 為空時，
+# 先拿到快照再建 MARKET_MAP，法人強化欄位（f_net_5d 等）才注入得到；
+# 本機已有資料則 0 成本跳過。
+# ─────────────────────────────────────────────────────────────────────────────
+if not st.session_state.get("db_snapshot_checked"):
+    st.session_state.db_snapshot_checked = True
+    try:
+        from tw_snapshot import download_snapshot_if_needed
+        _snap = download_snapshot_if_needed()
+        if _snap == "downloaded":
+            get_market_data.clear()          # 市場表需帶 DB 強化欄位重建
+            cached_get_data_status.clear()
+            st.toast("已從快照載入歷史資料庫", icon="✅")
+        elif _snap:
+            st.toast(_snap, icon="⚠️")
+    except Exception as _e:
+        st.toast(f"快照檢查略過：{_e}", icon="⚠️")
+
 MARKET_MAP    = get_market_data()
 STOCK_OPTIONS = _cached_stock_options(len(MARKET_MAP))
 TAIEX_CYCLE   = fetch_taiex_cycle()
@@ -208,24 +227,7 @@ if st.session_state.df_watchlist is None:
 check_and_trigger_auto_scan(MARKET_MAP)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DB 快照下載（雲端容器 DB 為空時從 GitHub db-snapshot 分支抓基底；
-# 本機已有資料則 0 成本跳過。放在 lazy sync 之前，讓雲端拿到基底後再增量補。）
-# ─────────────────────────────────────────────────────────────────────────────
-if not st.session_state.get("db_snapshot_checked"):
-    st.session_state.db_snapshot_checked = True
-    try:
-        from tw_snapshot import download_snapshot_if_needed
-        _snap = download_snapshot_if_needed()
-        if _snap == "downloaded":
-            cached_get_data_status.clear()
-            st.toast("已從快照載入歷史資料庫", icon="✅")
-        elif _snap:
-            st.toast(_snap, icon="⚠️")
-    except Exception as _e:
-        st.toast(f"快照檢查略過：{_e}", icon="⚠️")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DB Lazy Sync（每 session 只執行一次）
+# DB Lazy Sync（每 session 只執行一次；快照下載已提前至 MARKET_MAP 之前）
 # ─────────────────────────────────────────────────────────────────────────────
 if not st.session_state.get("db_lazy_sync_done"):
     st.session_state.db_lazy_sync_done = True
