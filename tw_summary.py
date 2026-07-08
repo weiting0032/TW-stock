@@ -14,7 +14,11 @@ from typing import Optional
 
 import pandas as pd
 
+import tw_config
+
 LIGHT = {"g": "🟢", "y": "🟡", "r": "🔴", "na": "⚪"}
+_HOT = tw_config.OVERHEAT_SCORE
+_SWEET = tw_config.SWEET_MIN
 
 
 def _safe_row(df: pd.DataFrame, code: str) -> Optional[pd.Series]:
@@ -36,10 +40,10 @@ def build_stock_summary(code: str, strat: dict, close: float, sma20: float,
     dims = []
 
     # ── 1. 技術面（依十分位回測：0-7 單調、8+ 過熱）─────────────────────────
-    if score >= 8:
+    if score >= _HOT:
         dims.append(("技術面", "y", f"⚠️ 過熱區 {score:.1f}/10",
                      "回測：8分以上 20 日期望轉負——訊號全亮常是買在人聲鼎沸處，等回檔"))
-    elif 5 <= score < 8 and above_ma:
+    elif _SWEET <= score < _HOT and above_ma:
         dims.append(("技術面", "g", f"甜蜜區 {score:.1f}/10・站上月線",
                      "回測：6–7 分為預測力最高區（20日等權alpha約+2~3%）"))
     elif 3 <= score < 5:
@@ -161,8 +165,8 @@ def build_stock_summary(code: str, strat: dict, close: float, sma20: float,
                     "bull": False}
 
     # ── 綜合結論（規則彙總，可追溯）─────────────────────────────────────────
-    sweet = 5 <= score < 8 and above_ma
-    hot = score >= 8
+    sweet = _SWEET <= score < _HOT and above_ma
+    hot = score >= _HOT
     if chip_ok and rev_ok and sweet and gate["bull"]:
         verdict = {"level": "A", "color": "#E8192C", "title": "🎯 符合已驗證複合條件",
                    "text": ("籌碼（外資投信同買＋投信連買≥5）×營收（YoY>20%）×技術甜蜜區"

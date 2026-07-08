@@ -20,6 +20,8 @@ import plotly.graph_objects as go
 import pytz
 import streamlit as st
 
+import tw_config
+
 from tw_data import (
     fetch_stock_history, fetch_weekly_history, get_market_data,
     fetch_taiex_cycle,
@@ -516,7 +518,7 @@ with tab1:
                         f'⚠️ {"／".join(_broken)}</span>')
             if _utilh is not None and _utilh >= 15:
                 _hb += f'<span class="badge badge-gold" style="margin-left:4px">融資{_utilh:.0f}%</span>'
-            if strat["score"] >= 8:
+            if strat["score"] >= tw_config.OVERHEAT_SCORE:
                 _hb += '<span class="badge badge-gold" style="margin-left:4px">⚠️ 過熱</span>'
             _hb_html = f'<div style="margin-top:4px">{_hb}</div>' if _hb else ''
             _day_chg    = float(m.get("漲跌幅", 0) or 0) if m else 0.0
@@ -621,7 +623,7 @@ with tab2:
         progress.empty()
         # 排序依 2 年回測校準（score_decile_backtest）：0–7 分預測力單調遞增、
         # 8 分以上為過熱區（20 日期望轉負）→ 未過熱者先按分數排，過熱組整段置後
-        candidates.sort(key=lambda x: (x["score"] >= 8.0, -x["score"]))
+        candidates.sort(key=lambda x: (x["score"] >= tw_config.OVERHEAT_SCORE, -x["score"]))
         st.session_state.scan_results    = candidates
         st.session_state.tab2_chart_sym  = ""
         st.session_state.tab2_chart_data = None
@@ -646,7 +648,7 @@ with tab2:
 
         def _extra_badges(code, score=None):
             badges = ""
-            if score is not None and score >= 8.0:
+            if score is not None and score >= tw_config.OVERHEAT_SCORE:
                 badges += ('<span class="badge badge-gold" style="margin-left:4px">'
                            '⚠️ 過熱</span>')
             streak = _scan_streak_map.get(code, 0)
@@ -744,8 +746,8 @@ with tab2:
         )
 
         _cp1, _cp2 = st.columns(2)
-        _inst_days  = _cp1.slider("法人視窗 N 日", 3, 20, 10, key="compound_inst_days")
-        _min_streak = _cp2.slider("投信連買天數 ≥", 0, 10, 5, key="compound_streak")
+        _inst_days  = _cp1.slider("法人視窗 N 日", 3, 20, tw_config.COMPOSITE["inst_days"], key="compound_inst_days")
+        _min_streak = _cp2.slider("投信連買天數 ≥", 0, 10, tw_config.COMPOSITE["min_streak"], key="compound_streak")
 
         _cp3, _cp4 = st.columns(2)
         _f_buy_chk  = _cp3.checkbox("外資 N 日淨買超 > 0", value=True, key="compound_f_buy")

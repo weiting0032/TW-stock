@@ -17,14 +17,12 @@ from typing import Optional
 
 import pandas as pd
 
+import tw_config
 from tw_db import upsert
 
-COST = 0.00585
+COST = tw_config.COST_ROUNDTRIP
 STRATEGY = "composite_v1"
-PARAMS = {
-    "inst_days": 10, "min_streak": 5, "require_foreign": True,
-    "yoy_thr": 20.0, "liq_min": 20_000_000,
-}
+PARAMS = {**tw_config.COMPOSITE, "liq_min": tw_config.LIQ_MIN}
 
 
 def _trade_dates(conn, upto: str = None, last_n: int = None) -> list:

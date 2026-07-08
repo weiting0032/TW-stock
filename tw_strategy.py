@@ -2,6 +2,8 @@
 import math
 import pandas as pd
 
+import tw_config
+
 
 def _default_strat(name: str, color: str) -> dict:
     return {
@@ -47,7 +49,7 @@ def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0,
     # 前後兩項恆低於當日收盤、永不觸發，顯示與觸發脫鉤且每日浮動；
     # 2026-07-05 出場回測（exit_backtest.py）驗證：趨勢單層出場平均+16.1%，
     # 加硬停損/獲利保護皆以平均報酬換尾部風險 → 維持趨勢出場、顯示改為真實線。
-    stop_loss   = sma60 * 0.98 if sma60 > 0 else close * 0.88
+    stop_loss   = sma60 * tw_config.TREND_EXIT_PCT if sma60 > 0 else close * 0.88
     take_profit = min(high52, close + 3.0 * atr) if atr and high52 > close else (close + 3.0 * atr if atr else close * 1.12)
     # ATR-based position sizing（每筆風險上限 30,000 TWD）
     _sl_dist  = max(close - stop_loss, close * 0.05)
