@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS signal_log (
     f_net INTEGER, t_net INTEGER, streak INTEGER, yoy_pct REAL,
     entry_open REAL,               -- T+1 開盤（次日由排程回填）
     ret_5 REAL, ret_20 REAL, ret_60 REAL,   -- 含成本、含息還原
+    cycle_phase INTEGER,           -- 訊號日大盤相位 1=牛/0=熊（2026-07-08 實證閘門）
     PRIMARY KEY (signal_date, stock_id, strategy)
 );
 
@@ -170,6 +171,10 @@ def get_conn() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     conn.executescript(_DDL)
+    # 輕量 migration：既有 DB 補新欄位（CREATE IF NOT EXISTS 不會改舊表）
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(signal_log)")}
+    if "cycle_phase" not in cols:
+        conn.execute("ALTER TABLE signal_log ADD COLUMN cycle_phase INTEGER")
     conn.commit()
     return conn
 

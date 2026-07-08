@@ -739,11 +739,17 @@ with tab2:
     with st.expander("🎯 籌碼×營收 複合選股", expanded=False):
         st.caption("籌碼與營收來自本地 DB；此區塊獨立於左側技術面掃描，不修改任何評分邏輯。")
         st.caption(
-            "📐 預設值為 2 年回測最佳組（2024-07~2026-07、481 交易日、含成本、基準 0050，"
-            "20 日超額 +3.6%／60 日 +14.8%）。回測重點：訊號後持有 20–60 日才是甜蜜區（5–10 日無優勢）；"
-            "「營收轉機」模式全參數實測為負效（勝率 38%），慎用；本因子選股不擇時——"
-            "弱市中絕對報酬可能為負，建議搭配主頁大盤週期在牛市相位執行。"
+            "📐 預設值為 2 年回測最佳組（還原價、含成本；walk-forward 誠實期望：每訊號"
+            "約 +1%／20日 vs 0050，牛相位條件下 +3.1%）。重點：持有 20–60 日才是甜蜜區"
+            "（5–10 日無優勢）；「營收轉機」模式實測負效慎用；本因子選股不擇時。"
         )
+        _ph_now = TAIEX_CYCLE.get("phase") if TAIEX_CYCLE else None
+        if _ph_now == 1:
+            st.caption("🐂 目前牛相位（大盤收盤>季線）——實證：牛相位訊號 "
+                       "20日 +7.3%／勝率 54.7%，60日 +24.3%／勝率 65.6%（n=479）。")
+        elif _ph_now is not None:
+            st.warning("🐻 目前熊相位（大盤收盤<季線）——實證：熊相位訊號 20日平均 −1.6%、"
+                       "超額 −2.75%（n=171）。本區訊號僅供觀察，等大盤收復季線再進場。")
 
         _cp1, _cp2 = st.columns(2)
         _inst_days  = _cp1.slider("法人視窗 N 日", 3, 20, tw_config.COMPOSITE["inst_days"], key="compound_inst_days")
@@ -895,12 +901,15 @@ with tab2:
                         lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "…")
                 _jd["yoy_pct"] = _jd["yoy_pct"].map(
                     lambda v: f"{v:.0f}%" if pd.notna(v) else "—")
+                if "cycle_phase" in _jd.columns:
+                    _jd["cycle_phase"] = _jd["cycle_phase"].map(
+                        {1: "🐂", 0: "🐻"}).fillna("—")
                 st.dataframe(
                     _jd.rename(columns={
                         "signal_date": "訊號日", "stock_id": "代號", "name": "名稱",
                         "close_at_signal": "訊號日收盤", "streak": "投信連買",
-                        "yoy_pct": "YoY", "ret_5": "5日", "ret_20": "20日",
-                        "ret_60": "60日"}),
+                        "yoy_pct": "YoY", "cycle_phase": "相位",
+                        "ret_5": "5日", "ret_20": "20日", "ret_60": "60日"}),
                     use_container_width=True, hide_index=True,
                 )
         except Exception as _je:

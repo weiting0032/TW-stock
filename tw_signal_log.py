@@ -99,6 +99,21 @@ def compute_hits(conn: sqlite3.Connection, d: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def get_cycle_phase():
+    """大盤相位 1=牛/0=熊（^TWII 收盤>SMA60，與 app/walk-forward 同規則）。
+    實證（walkforward_validation 2026-07-08）：牛相位訊號 h20 +7.3%/勝54.7%、
+    熊相位 −1.6%/勝46.8% → 相位隨訊號入庫，熊相位推播帶警語。失敗回 None。"""
+    try:
+        import yfinance as yf
+        tw = yf.Ticker("^TWII").history(period="1y", auto_adjust=True)
+        if tw is None or len(tw) < 60:
+            return None
+        sma60 = tw["Close"].rolling(60).mean().iloc[-1]
+        return int(float(tw["Close"].iloc[-1]) > float(sma60))
+    except Exception:
+        return None
+
+
 def log_signals(conn: sqlite3.Connection, d: str = None) -> pd.DataFrame:
     """記錄最新交易日的新訊號（冪等：重跑同日結果覆蓋、已回填報酬不動——
     重跑只在當日資料重抓時發生，屆時 ret_* 尚未回填）。"""
@@ -109,6 +124,7 @@ def log_signals(conn: sqlite3.Connection, d: str = None) -> pd.DataFrame:
         return pd.DataFrame()
     hits = compute_hits(conn, d)
     if not hits.empty:
+        hits["cycle_phase"] = get_cycle_phase()
         upsert(conn, "signal_log", hits)
     return hits
 
@@ -183,7 +199,7 @@ def get_journal(conn: sqlite3.Connection):
     """回傳 (summary dict, 明細 DataFrame 由新到舊)。"""
     df = pd.read_sql_query(
         "SELECT l.signal_date, l.stock_id, n.name, l.close_at_signal, "
-        "       l.streak, l.yoy_pct, l.ret_5, l.ret_20, l.ret_60 "
+        "       l.streak, l.yoy_pct, l.cycle_phase, l.ret_5, l.ret_20, l.ret_60 "
         "FROM signal_log l LEFT JOIN stock_names n ON n.stock_id = l.stock_id "
         "WHERE l.strategy = ? "
         "ORDER BY l.signal_date DESC, l.stock_id", conn, params=(STRATEGY,))
@@ -204,11 +220,18 @@ def push_daily_signals(conn: sqlite3.Connection, hits: pd.DataFrame, d: str) -> 
     from tw_notifications import send_tg_message  # 延遲載入（含 streamlit）
 
     names = dict(conn.execute("SELECT stock_id, name FROM stock_names"))
+    phase = (int(hits["cycle_phase"].iloc[0])
+             if hits is not None and not hits.empty
+             and pd.notna(hits["cycle_phase"].iloc[0]) else get_cycle_phase())
+    ph_txt = {1: "🐂 牛相位", 0: "🐻 熊相位"}.get(phase, "—")
     lines = [
         "🎯 *籌碼×營收 複合訊號（樣本外日誌）*",
-        f"📅 {d} 盤後 | 參數：10日雙買/投信連買≥5/YoY>20",
+        f"📅 {d} 盤後 | 參數：10日雙買/投信連買≥5/YoY>20 | 大盤：{ph_txt}",
         "─────────────────────",
     ]
+    if phase == 0:
+        lines.append("⚠️ *熊相位警示*：實證熊相位訊號 20 日平均 −1.6%、勝率 47%"
+                     "——本日訊號僅供觀察，不建議進場（等大盤收復季線）。")
     if hits is None or hits.empty:
         lines.append("本日無新觸發訊號。")
     else:
