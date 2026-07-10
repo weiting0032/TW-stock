@@ -15,10 +15,11 @@ def _default_strat(name: str, color: str) -> dict:
 
 
 def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0,
-                 market_info: dict = None) -> dict:
-    """多因子評分策略 (0–10分)"""
+                 market_info: dict = None, weights: dict = None) -> dict:
+    """多因子評分策略 (0–10分)。weights=None → tw_config.ACTIVE_SCORE_WEIGHTS。"""
     if df is None or df.empty or len(df) < 20:
         return _default_strat("資料不足", "#5A6072")
+    W = weights or tw_config.ACTIVE_SCORE_WEIGHTS
 
     last = df.iloc[-1]
     prev = df.iloc[-2] if len(df) >= 2 else last
@@ -57,50 +58,65 @@ def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0,
 
     score, reasons, warnings = 0.0, [], []
 
+    # 權重查表版（結構與 v1 完全一致；權重 0 → 不計分也不掛標籤）
     # 1. Trend
     if close > sma20 > sma60:
-        score += 2.0; reasons.append("均線多頭")
+        score += W["trend"]
+        if W["trend"]: reasons.append("均線多頭")
         if sma5 > sma20:
-            score += 0.5; reasons.append("5日線向上")
+            score += W["trend_5d"]
+            if W["trend_5d"]: reasons.append("5日線向上")
     elif close < sma20 < sma60:
-        score -= 1.0; warnings.append("均線空頭")
+        score += W["trend_pen"]
+        if W["trend_pen"]: warnings.append("均線空頭")
 
     # 2. Annual line
     if sma240 > 0:
         if close > sma240:
-            score += 1.0; reasons.append("站上年線")
+            score += W["annual"]
+            if W["annual"]: reasons.append("站上年線")
         else:
-            score -= 0.5; warnings.append("年線下方")
+            score += W["annual_pen"]
+            if W["annual_pen"]: warnings.append("年線下方")
 
     # 3. KD
     k_prev = float(prev["K"]); d_prev = float(prev["D"])
     if k < 20 and d < 20 and k > d and k_prev < d_prev:
-        score += 2.5; reasons.append("KD低檔黃金交叉")
+        score += W["kd_golden"]
+        if W["kd_golden"]: reasons.append("KD低檔黃金交叉")
     elif k < 30 and k > d:
-        score += 1.5; reasons.append("KD低檔翻揚")
+        score += W["kd_turn"]
+        if W["kd_turn"]: reasons.append("KD低檔翻揚")
     elif k > 80 and d > 80:
-        score -= 1.0; warnings.append("KD高檔超買")
+        score += W["kd_ob"]
+        if W["kd_ob"]: warnings.append("KD高檔超買")
     if k > 85 and j > 90:
-        score -= 1.5; warnings.append("KD超買+J值過熱")
+        score += W["kdj_hot"]
+        if W["kdj_hot"]: warnings.append("KD超買+J值過熱")
 
     # 4. RSI
     if rsi < 30:
-        score += 1.5; reasons.append(f"RSI超賣({rsi:.0f})")
+        score += W["rsi_os"]
+        if W["rsi_os"]: reasons.append(f"RSI超賣({rsi:.0f})")
     elif 40 <= rsi <= 65:
-        score += 0.5; reasons.append("RSI健康")
+        score += W["rsi_mid"]
+        if W["rsi_mid"]: reasons.append("RSI健康")
     elif rsi > 80:
-        score -= 1.0; warnings.append(f"RSI超買({rsi:.0f})")
+        score += W["rsi_ob"]
+        if W["rsi_ob"]: warnings.append(f"RSI超買({rsi:.0f})")
 
     # 5. BB breakout
     prev_bb_w = float(prev.get("BB_Width", 1.0))
     if close > float(last["BB_Upper"]) and vol_r > 1.5 and prev_bb_w < 0.08:
-        score += 2.5; reasons.append("BB壓縮放量突破")
+        score += W["bb_break"]
+        if W["bb_break"]: reasons.append("BB壓縮放量突破")
     elif bb_w < 0.08:
         reasons.append("BB醞釀蓄力")
 
     # 6. Volume
     if vol_r >= 2.0 and close >= sma20:
-        score += 1.0; reasons.append(f"大量上漲({vol_r:.1f}倍)")
+        score += W["vol_surge"]
+        if W["vol_surge"]: reasons.append(f"大量上漲({vol_r:.1f}倍)")
     elif vol_r < 0.5:
         warnings.append("成交量萎縮")
 
@@ -109,32 +125,40 @@ def get_strategy(df: pd.DataFrame, held_shares: float = 0, held_cost: float = 0,
         obv_5d  = float(df["OBV"].iloc[-6])
         obv_now = float(last["OBV"])
         if obv_now > obv_5d and close > sma20:
-            score += 0.5; reasons.append("OBV籌碼承接")
+            score += W["obv"]
+            if W["obv"]: reasons.append("OBV籌碼承接")
         elif obv_now < obv_5d and close > sma20:
             warnings.append("OBV走弱，留意出貨")
 
     # 7. MACD
     prev_hist = float(prev["Hist"])
-    if prev_hist < 0 <= macd_h:              # 零軸翻多（最強訊號）
-        score += 1.5; reasons.append("MACD零軸翻多")
+    if prev_hist < 0 <= macd_h:              # 零軸翻多
+        score += W["macd_zero"]
+        if W["macd_zero"]: reasons.append("MACD零軸翻多")
     elif macd_h > 0 and macd_h > prev_hist:  # 正區間動能增強
-        score += 0.5; reasons.append("MACD動能增強")
+        score += W["macd_up"]
+        if W["macd_up"]: reasons.append("MACD動能增強")
     elif macd_h < 0 and macd_h < prev_hist:  # 負區間繼續惡化
-        score -= 0.5; warnings.append("MACD動能轉弱")
+        score += W["macd_down"]
+        if W["macd_down"]: warnings.append("MACD動能轉弱")
 
     # 8. 52W position
     if close >= high52 * 0.95:
-        score += 0.5; reasons.append("接近年高")
+        score += W["hi52"]
+        if W["hi52"]: reasons.append("接近年高")
     if (close - low52) / max(high52 - low52, 1e-9) < 0.15:
-        score += 0.5; reasons.append("接近年低支撐")
+        score += W["lo52"]
+        if W["lo52"]: reasons.append("接近年低支撐")
 
     # 9. 10-day price momentum
     if len(df) >= 12:
         mom10 = (close / float(df["Close"].iloc[-11]) - 1) * 100
         if mom10 > 5.0:
-            score += 0.5; reasons.append(f"10日動能({mom10:.1f}%)")
+            score += W["mom10"]
+            if W["mom10"]: reasons.append(f"10日動能({mom10:.1f}%)")
         elif mom10 < -8.0:
-            score -= 0.5; warnings.append(f"10日走弱({mom10:.1f}%)")
+            score += W["mom10_pen"]
+            if W["mom10_pen"]: warnings.append(f"10日走弱({mom10:.1f}%)")
 
     # 10. Institutional flow（三大法人 + 融資警示）
     if market_info:

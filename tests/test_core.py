@@ -197,6 +197,23 @@ class TestStrategy(unittest.TestCase):
         s_old = get_strategy(ind, market_info={"三大合計": 600})
         self.assertTrue(any("法人大幅買超" in r for r in s_old["reasons"]))
 
+    def test_score_v2_deployed(self):
+        self.assertEqual(tw_config.ACTIVE_SCORE_WEIGHTS,
+                         tw_config.SCORE_WEIGHTS_V2)
+        for k in ("kd_turn", "kd_ob", "kdj_hot", "rsi_ob"):
+            self.assertEqual(tw_config.SCORE_WEIGHTS_V2[k], 0.0)
+        self.assertEqual(tw_config.SCORE_WEIGHTS_V2["hi52"], 1.0)
+        self.assertEqual(tw_config.OVERHEAT_SCORE, 9.0)
+
+    def test_v2_overbought_penalty_removed(self):
+        ind = _synthetic_ind()
+        ind["K"], ind["D"] = 82.0, 81.0     # 觸發 KD高檔超買 條件
+        s1 = get_strategy(ind, weights=tw_config.SCORE_WEIGHTS_V1)
+        s2 = get_strategy(ind, weights=tw_config.SCORE_WEIGHTS_V2)
+        self.assertIn("KD高檔超買", s1["warnings"])
+        self.assertNotIn("KD高檔超買", s2["warnings"])
+        self.assertAlmostEqual(s2["score"] - s1["score"], 1.0)
+
     def test_config_single_source(self):
         self.assertEqual(PARAMS["inst_days"], tw_config.COMPOSITE["inst_days"])
         self.assertEqual(PARAMS["min_streak"], tw_config.COMPOSITE["min_streak"])

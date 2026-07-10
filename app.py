@@ -663,8 +663,8 @@ with tab2:
         _show_n = _nc.selectbox("卡片顯示檔數", [20, 50, 100, _opt_all],
                                 index=0, key="scan_show_n")
         _show_n = 10 ** 9 if _show_n == _opt_all else int(_show_n)
-        st.caption("排序依 2 年回測校準：6–7 分為甜蜜區；**8 分以上屬過熱區**"
-                   "（歷史 20 日期望轉負）→ 標記 ⚠️ 並整組置後，追高前先看回檔。")
+        st.caption("排序依 Score v2 樣本外校準：7 分為甜蜜點（alpha 最高）、8 分次之；"
+                   "**9 分以上邊際趨零** → 標記 ⚠️ 並置後。")
 
         if buys:
             st.markdown(f'<div class="qsec">🟥 買進機會 ({len(buys)} 檔)</div>', unsafe_allow_html=True)

@@ -39,13 +39,13 @@ def build_stock_summary(code: str, strat: dict, close: float, sma20: float,
     above_ma = bool(close and sma20 and close >= sma20)
     dims = []
 
-    # ── 1. 技術面（依十分位回測：0-7 單調、8+ 過熱）─────────────────────────
+    # ── 1. 技術面（Score v2 樣本外分箱：5-8 遞增、7 分最高、9+ 邊際趨零）────
     if score >= _HOT:
         dims.append(("技術面", "y", f"⚠️ 過熱區 {score:.1f}/10",
-                     "回測：8分以上 20 日期望轉負——訊號全亮常是買在人聲鼎沸處，等回檔"))
+                     f"v2 回測：{int(_HOT)} 分以上邊際趨零——訊號全亮常買在人聲鼎沸處"))
     elif _SWEET <= score < _HOT and above_ma:
         dims.append(("技術面", "g", f"甜蜜區 {score:.1f}/10・站上月線",
-                     "回測：6–7 分為預測力最高區（20日等權alpha約+2~3%）"))
+                     "v2 回測：7 分箱樣本外 alpha 最高（20日 ~+4%），8 分次之"))
     elif 3 <= score < 5:
         dims.append(("技術面", "y", f"中性 {score:.1f}/10",
                      "訊號未共振，等均線/KD/量能同步"))

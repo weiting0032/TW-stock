@@ -21,10 +21,11 @@ COMPOSITE = {
     "yoy_thr": 20.0,        # 月營收 YoY 門檻（%）
 }
 
-# 評分區間語義（score_decile_backtest.py，2026-07-04）：
-# 0–7 分單調遞增；8 分以上過熱（20 日期望轉負）
+# 評分區間語義（score_v2_validation.py TEST 期分箱，2026-07-10）：
+# v2 下 7 分箱 alpha 最高(+4.1%)、8 分次之(+3.4%)、9 分邊際趨零(+0.7%)
+# → 過熱門檻由 v1 的 8 上移至 9
 SWEET_MIN = 5.0
-OVERHEAT_SCORE = 8.0
+OVERHEAT_SCORE = 9.0
 
 # 出場線（exit_backtest.py，2026-07-05）：趨勢單層出場為停損型規則最佳；
 # 更緊的停損以平均報酬換尾部風險，已否決為預設
@@ -32,3 +33,28 @@ TREND_EXIT_PCT = 0.98       # SMA60 × 0.98
 
 # 回測建議持有區間（交易日）
 HOLD_SWEET_RANGE = (20, 60)
+
+# ── 10 因子評分權重 ───────────────────────────────────────────────────────────
+# v1：V16 原始手調權重（score_decile_backtest 驗證 0-7 單調有效）
+SCORE_WEIGHTS_V1 = {
+    "trend": 2.0, "trend_5d": 0.5, "trend_pen": -1.0,
+    "annual": 1.0, "annual_pen": -0.5,
+    "kd_golden": 2.5, "kd_turn": 1.5, "kd_ob": -1.0, "kdj_hot": -1.5,
+    "rsi_os": 1.5, "rsi_mid": 0.5, "rsi_ob": -1.0,
+    "bb_break": 2.5, "vol_surge": 1.0, "obv": 0.5,
+    "macd_zero": 1.5, "macd_up": 0.5, "macd_down": -0.5,
+    "hi52": 0.5, "lo52": 0.5, "mom10": 0.5, "mom10_pen": -0.5,
+}
+
+# v2（2026-07-10 定案）：train 期（2024-07~2025-06）預註冊規則修訂，
+# test 期（2025-07 起）判準通過（IC +0.039→+0.044、BUY桶 a20 +2.35→+2.42%
+# 且訊號數 +30%、9分箱 −0.20→+0.73%）。詳 score_v2_validation.py。
+SCORE_WEIGHTS_V2 = {**SCORE_WEIGHTS_V1,
+    "kd_turn": 0.0,    # train uplift −0.53pp（低檔翻揚實為弱勢特徵）
+    "kd_ob": 0.0,      # train +1.92pp——超買懲罰在懲罰強勢股
+    "kdj_hot": 0.0,    # train +1.88pp
+    "rsi_ob": 0.0,     # train +1.25pp
+    "hi52": 1.0,       # train +1.56pp（接近年高為最強動能特徵）
+}
+
+ACTIVE_SCORE_WEIGHTS = SCORE_WEIGHTS_V2     # 切回 v1：改指向 SCORE_WEIGHTS_V1
